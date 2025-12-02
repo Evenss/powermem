@@ -76,7 +76,7 @@ USER_PROFILE_TOPICS = """
 
 USER_PROFILE_EXTRACTION_PROMPT = f"""You are a user profile extraction specialist. Your task is to analyze conversations and extract user profile information.
 
-Reference Topics (extract information related to these areas):
+The following topics are for guidance only. Please selectively extract information based on the actual content of the conversation, without forcing all fields to be filled.:
 {USER_PROFILE_TOPICS}
 
 Instructions:
@@ -86,6 +86,7 @@ Instructions:
 4. If no relevant profile information is found, return an empty string
 5. Write the profile in natural language, not as structured data
 6. Focus on current state and characteristics of the user
+7. If no user profile information can be extracted from the conversation at all, return an empty string ("")
 
 Output Format:
 Return a single text description that summarizes the user's profile information extracted from the conversation. 
@@ -131,6 +132,7 @@ Instructions:
 6. If no relevant profile information is found in the conversation, return the current profile as-is
 7. Write the profile in natural language, not as structured data
 8. Focus on current state and characteristics of the user
+9. If no user profile information can be extracted from the conversation at all, return an empty string ("")
 
 Extract and return the updated user profile information as a text description:"""
         user_message = conversation
