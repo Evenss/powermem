@@ -76,10 +76,11 @@ USER_PROFILE_TOPICS = """
 
 USER_PROFILE_EXTRACTION_PROMPT = f"""You are a user profile extraction specialist. Your task is to analyze conversations and extract user profile information.
 
+[Reference Topics]:
 The following topics are for guidance only. Please selectively extract information based on the actual content of the conversation, without forcing all fields to be filled.:
 {USER_PROFILE_TOPICS}
 
-Instructions:
+[Instructions]:
 1. Review the current user profile if provided above
 2. Analyze the new conversation carefully to identify any new or updated user-related information
 3. Extract only factual information explicitly mentioned in the conversation
@@ -113,13 +114,14 @@ def get_user_profile_extraction_prompt(conversation: str, existing_profile: Opti
     if existing_profile:
         current_profile_section = f"""
 
-Current User Profile:
+[Current User Profile]:
 ```
 {existing_profile}
 ```"""
     
     system_prompt = f"""{USER_PROFILE_EXTRACTION_PROMPT}{current_profile_section}
 
+[Target]:
 Extract and return the user profile information as a text description:"""
     user_message = conversation
     
