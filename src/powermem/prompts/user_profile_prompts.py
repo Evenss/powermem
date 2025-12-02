@@ -81,7 +81,7 @@ The following topics are for guidance only. Please selectively extract informati
 {USER_PROFILE_TOPICS}
 
 [Instructions]:
-1. Review the current user profile if provided above
+1. Review the current user profile if provided below
 2. Analyze the new conversation carefully to identify any new or updated user-related information
 3. Extract only factual information explicitly mentioned in the conversation
 4. Update the profile by:
@@ -92,7 +92,8 @@ The following topics are for guidance only. Please selectively extract informati
 6. If no relevant profile information is found in the conversation, return the current profile as-is
 7. Write the profile in natural language, not as structured data
 8. Focus on current state and characteristics of the user
-9. If no user profile information can be extracted from the conversation at all, return an empty string ("")
+9. If no user profile information can be extracted from the conversation at all, return an empty string ""
+10. The final extracted profile description must not exceed 1,000 characters. If it does, compress the content concisely without losing essential factual information.
 """
 
 
