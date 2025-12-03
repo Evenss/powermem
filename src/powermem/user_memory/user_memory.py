@@ -270,6 +270,84 @@ class UserMemory:
         
         return search_result
 
+    def get(
+        self,
+        memory_id: int,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get a specific memory by ID.
+        
+        See memory.get() for details.
+        """
+        return self.memory.get(memory_id, user_id, agent_id)
+
+    def update(
+        self,
+        memory_id: int,
+        content: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Update an existing memory.
+        
+        See memory.update() for details.
+        """
+        return self.memory.update(memory_id, content, user_id, agent_id, metadata)
+
+    def delete(
+        self,
+        memory_id: int,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> bool:
+        """
+        Delete a memory.
+        
+        See memory.delete() for details.
+        """
+        return self.memory.delete(memory_id, user_id, agent_id)
+
+    def delete_all(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> bool:
+        """
+        Delete all memories for given identifiers.
+        
+        See memory.delete_all() for details.
+        """
+        return self.memory.delete_all(user_id, agent_id, run_id)
+
+    def get_all(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """
+        Get all memories with optional filtering.
+        
+        See memory.get_all() for details.
+        """
+        return self.memory.get_all(user_id, agent_id, run_id, limit, offset, filters)
+
+    def reset(self):
+        """
+        Reset the memory store.
+        
+        See memory.reset() for details.
+        """
+        return self.memory.reset()
+
     def profile(
         self,
         user_id: str,
