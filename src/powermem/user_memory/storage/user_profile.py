@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any
 from sqlalchemy import and_
 
 from ...storage.oceanbase import constants
-from ...utils.utils import serialize_datetime, generate_snowflake_id
+from ...utils.utils import serialize_datetime, generate_snowflake_id, get_current_datetime
 
 try:
     from pyobvector import ObVecClient
@@ -145,7 +145,7 @@ class OceanBaseUserProfileStore(UserProfileStoreBase):
         Returns:
             Profile ID (existing or newly generated Snowflake ID)
         """
-        now = serialize_datetime(datetime.now())
+        now = serialize_datetime(get_current_datetime())
         
         # Normalize empty strings to None for comparison
         agent_id_normalized = agent_id or ""
