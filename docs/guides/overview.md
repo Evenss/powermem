@@ -11,6 +11,7 @@ Comprehensive guides for using powermem effectively.
 - **[Integrations Guide](integrations)** - Third-party integrations
 - **[Sub Stores Guide](sub_stores)** - Advanced sub-store configuration
 - **[Multimodal Capability](../examples/scenario_7_multimodal.md)** - Image and multimedia processing
+- **[UserMemory Guide](user_memory)** - User profile management and extraction
 
 ## Quick Navigation
 
@@ -20,3 +21,4 @@ Comprehensive guides for using powermem effectively.
 - **Advanced features?** Check [Sub Stores Guide](sub_stores)
 - **Integrations?** Check [Integrations Guide](integrations)
 - **Multimodal?** See [Multimodal Capability](../examples/scenario_7_multimodal.md)
+- **User profiles?** See [UserMemory Guide](user_memory)
