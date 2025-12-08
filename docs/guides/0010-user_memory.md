@@ -76,7 +76,7 @@ config = {
 user_memory = UserMemory(config=config)
 ```
 
-> Note: `UserMemory` internally creates a `Memory` instance to store conversation events and a `UserProfileStore` to store user profiles. Both use the same storage backend configuration.
+> **Important Note**: `UserMemory` internally creates a `Memory` instance to store conversation events and a `UserProfileStore` to store user profiles. Currently, `UserProfileStore` only supports OceanBase as the storage backend. If you attempt to use `UserMemory` with a different storage provider (e.g., SQLite, PostgreSQL), it will raise a `ValueError` with a clear error message. To use `UserMemory`, please configure OceanBase as your vector store provider.
 
 ## Core APIs
 

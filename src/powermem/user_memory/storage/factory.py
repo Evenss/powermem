@@ -26,7 +26,6 @@ class UserProfileStoreFactory:
     
     provider_to_class = {
         "oceanbase": "powermem.user_memory.storage.user_profile.OceanBaseUserProfileStore",
-        "default": "powermem.user_memory.storage.user_profile.OceanBaseUserProfileStore",
     }
 
     @classmethod
@@ -45,10 +44,17 @@ class UserProfileStoreFactory:
             ValueError: If the provider is not supported
         """
         provider_name = provider_name.lower()
-        class_type = cls.provider_to_class.get(provider_name, cls.provider_to_class.get("default"))
+        class_type = cls.provider_to_class.get(provider_name)
         
         if not class_type:
-            raise ValueError(f"Unsupported UserProfileStore provider: {provider_name}")
+            supported_providers = ", ".join(cls.provider_to_class.keys())
+            raise ValueError(
+                f"Unsupported UserProfileStore provider: {provider_name}. "
+                f"Currently supported providers are: {supported_providers}. "
+                f"Note: UserProfileStore currently only supports OceanBase. "
+                f"If you're using a different storage provider for Memory, please use OceanBase for UserMemory "
+                f"or implement a UserProfileStore for your storage provider."
+            )
         
         try:
             ProfileStoreClass = load_class(class_type)
