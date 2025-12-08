@@ -18,7 +18,7 @@ class SparseEmbeddingBase(ABC):
             self.config = config
 
     @abstractmethod
-    def embed(self, text) -> dict:
+    def embed_sparse(self, text) -> dict:
         """
         Get the sparse embedding for the given text.
 
@@ -26,5 +26,6 @@ class SparseEmbeddingBase(ABC):
             text (str): The text to embed.
         Returns:
             dict: The sparse embedding dictionary.
+            like {1:0.1, 2:0.2, 3:0.3} or {'1':0.1, '2':0.2, '3':0.3}
         """
         pass
