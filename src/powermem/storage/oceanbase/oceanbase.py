@@ -6,6 +6,7 @@ This module provides OceanBase-based storage for memory data.
 import heapq
 import json
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
@@ -1570,6 +1571,15 @@ class OceanBaseVectorStore(VectorStoreBase):
     
     def _check_and_create_sparse_vector_column_and_index(self):
         """Check and create sparse vector column and index if they don't exist."""
+        # First check if version supports sparse vector
+        if not self._check_sparse_vector_version_support():
+            logger.warning(
+                "Database version does not support sparse vector. "
+                "Sparse vector requires seekdb or OceanBase >= 4.5.0"
+            )
+            self.include_sparse = False
+            return
+
         if not self._check_sparse_vector_column_exists():
             self._create_sparse_vector_column_and_index()
         elif not self._check_sparse_vector_index_exists():
@@ -1605,9 +1615,78 @@ class OceanBaseVectorStore(VectorStoreBase):
         except Exception as e:
             logger.error(f"An error occurred while checking the sparse vector index: {e}")
             return False
-    
+
+    def _check_sparse_vector_version_support(self) -> bool:
+        """
+        Check if the database version supports sparse vector.
+
+        Returns:
+            True if version is seekdb or OceanBase >= 4.5.0, False otherwise.
+        """
+        try:
+            with self.obvector.engine.connect() as conn:
+                # Try to get version information
+                # OceanBase uses SELECT VERSION() or SHOW VARIABLES LIKE 'version'
+                try:
+                    result = conn.execute(text("SELECT VERSION()"))
+                    version_str = result.fetchone()[0]
+                except Exception:
+                    # Fallback to SHOW VARIABLES
+                    try:
+                        result = conn.execute(text("SHOW VARIABLES LIKE 'version'"))
+                        row = result.fetchone()
+                        version_str = row[1] if row else ""
+                    except Exception:
+                        logger.warning("Could not determine database version, assuming sparse vector not supported")
+                        return False
+
+                if not version_str:
+                    logger.warning("Empty version string, assuming sparse vector not supported")
+                    return False
+
+                version_str = str(version_str).strip().lower()
+
+                # Check if it's seekdb
+                if "seekdb" in version_str:
+                    logger.info("Detected seekdb, sparse vector is supported")
+                    return True
+
+                # Check if it's OceanBase and version >= 4.5.0
+                version_match = re.search(r'[vV](\d+)\.(\d+)\.(\d+)', version_str)
+                if version_match:
+                    major = int(version_match.group(1))
+                    minor = int(version_match.group(2))
+                    patch = int(version_match.group(3))
+
+                    if major > 4 or (major == 4 and minor >= 5):
+                        logger.info(f"Detected OceanBase version {major}.{minor}.{patch}, sparse vector is supported")
+                        return True
+                    else:
+                        logger.warning(
+                            f"Detected OceanBase version {major}.{minor}.{patch}, "
+                            f"sparse vector requires version >= 4.5.0"
+                        )
+                        return False
+                else:
+                    logger.warning(
+                        f"Could not parse version string: {version_str}, assuming sparse vector not supported")
+                    return False
+
+        except Exception as e:
+            logger.warning(f"Error checking database version: {e}, assuming sparse vector not supported")
+            return False
+
     def _create_sparse_vector_column_and_index(self):
         """Create sparse vector column and index."""
+        # First check if version supports sparse vector
+        if not self._check_sparse_vector_version_support():
+            logger.warning(
+                "Database version does not support sparse vector. "
+                "Sparse vector requires seekdb or OceanBase >= 4.5.0"
+            )
+            self.include_sparse = False
+            return
+
         try:
             logger.debug(
                 "About to create sparse vector column and index for collection '%s'",
