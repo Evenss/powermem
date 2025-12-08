@@ -303,26 +303,73 @@ class UserMemory:
         memory_id: int,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        delete_profile: bool = False,
     ) -> bool:
         """
         Delete a memory.
         
-        See memory.delete() for details.
+        Args:
+            memory_id: Memory ID to delete
+            user_id: Optional user identifier
+            agent_id: Optional agent identifier
+            delete_profile: If True, also delete the corresponding user profile
+        
+        Returns:
+            True if deleted successfully, False otherwise
         """
-        return self.memory.delete(memory_id, user_id, agent_id)
+        result = self.memory.delete(memory_id, user_id, agent_id)
+        
+        # Delete profile if requested and user_id is provided
+        if delete_profile and user_id:
+            try:
+                profile = self.profile_store.get_profile(
+                    user_id=user_id,
+                    agent_id=agent_id,
+                )
+                if profile and profile.get("id"):
+                    self.profile_store.delete_profile(profile["id"])
+                    logger.info(f"Deleted profile for user_id: {user_id}, agent_id: {agent_id}")
+            except Exception as e:
+                logger.warning(f"Failed to delete profile for user_id: {user_id}, agent_id: {agent_id}: {e}")
+        
+        return result
 
     def delete_all(
         self,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         run_id: Optional[str] = None,
+        delete_profile: bool = False,
     ) -> bool:
         """
         Delete all memories for given identifiers.
         
-        See memory.delete_all() for details.
+        Args:
+            user_id: Optional user identifier
+            agent_id: Optional agent identifier
+            run_id: Optional run identifier
+            delete_profile: If True, also delete the corresponding user profile
+        
+        Returns:
+            True if deleted successfully, False otherwise
         """
-        return self.memory.delete_all(user_id, agent_id, run_id)
+        result = self.memory.delete_all(user_id, agent_id, run_id)
+        
+        # Delete profile if requested and user_id is provided
+        if delete_profile and user_id:
+            try:
+                profile = self.profile_store.get_profile(
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    run_id=run_id,
+                )
+                if profile and profile.get("id"):
+                    self.profile_store.delete_profile(profile["id"])
+                    logger.info(f"Deleted profile for user_id: {user_id}, agent_id: {agent_id}, run_id: {run_id}")
+            except Exception as e:
+                logger.warning(f"Failed to delete profile for user_id: {user_id}, agent_id: {agent_id}, run_id: {run_id}: {e}")
+        
+        return result
 
     def get_all(
         self,
@@ -390,4 +437,43 @@ class UserMemory:
                 "updated_at": profile["updated_at"],
             }
         return {}
+
+    def delete_profile(
+        self,
+        user_id: str,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> bool:
+        """
+        Delete user profile by user_id, agent_id, and run_id.
+
+        Args:
+            user_id: User identifier (required)
+            agent_id: Optional agent identifier for filtering
+            run_id: Optional run identifier for filtering
+
+        Returns:
+            True if profile was deleted successfully, False if profile not found
+        """
+        try:
+            # Get profile first to obtain profile_id
+            profile = self.profile_store.get_profile(
+                user_id=user_id,
+                agent_id=agent_id,
+                run_id=run_id,
+            )
+            
+            if profile and profile.get("id"):
+                # Delete profile using profile_id
+                result = self.profile_store.delete_profile(profile["id"])
+                if result:
+                    logger.info(f"Deleted profile for user_id: {user_id}, agent_id: {agent_id}, run_id: {run_id}")
+                return result
+            else:
+                logger.debug(f"Profile not found for user_id: {user_id}, agent_id: {agent_id}, run_id: {run_id}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Failed to delete profile for user_id: {user_id}, agent_id: {agent_id}, run_id: {run_id}: {e}")
+            raise
 
