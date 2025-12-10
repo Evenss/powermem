@@ -311,12 +311,12 @@ class OceanBaseUserProfileStore(UserProfileStoreBase):
         """
         Filter topics dictionary in memory after SQL filtering.
         This ensures only matching main topics and sub topics are returned.
-        
+
         Args:
             topics: Full topics dictionary
             main_topic: Optional list of main topic names to include
             sub_topic: Optional list of sub topic names to include
-        
+
         Returns:
             Filtered topics dictionary
         """
