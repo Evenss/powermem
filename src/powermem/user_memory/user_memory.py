@@ -120,8 +120,6 @@ class UserMemory:
         profile_content = self._extract_profile(
             messages=messages,
             user_id=user_id,
-            agent_id=agent_id,
-            run_id=run_id,
         )
         
         if profile_content:
@@ -129,8 +127,6 @@ class UserMemory:
             profile_id = self.profile_store.save_profile(
                 user_id=user_id,
                 profile_content=profile_content,
-                agent_id=agent_id,
-                run_id=run_id,
             )
             logger.info(f"Profile saved for user_id: {user_id}, profile_id: {profile_id}")
         else:
@@ -190,8 +186,6 @@ class UserMemory:
         try:
             profile = self.profile_store.get_profile(
                 user_id=user_id,
-                agent_id=agent_id,
-                run_id=run_id,
             )
             if profile and profile.get("profile_content"):
                 existing_profile = profile["profile_content"]
@@ -262,8 +256,6 @@ class UserMemory:
         if add_profile and user_id:
             profile = self.profile_store.get_profile(
                 user_id=user_id,
-                agent_id=agent_id,
-                run_id=run_id,
             )
             if profile:
                 search_result["profile_content"] = profile["profile_content"]
@@ -324,7 +316,6 @@ class UserMemory:
             try:
                 profile = self.profile_store.get_profile(
                     user_id=user_id,
-                    agent_id=agent_id,
                 )
                 if profile and profile.get("id"):
                     self.profile_store.delete_profile(profile["id"])
@@ -360,8 +351,6 @@ class UserMemory:
             try:
                 profile = self.profile_store.get_profile(
                     user_id=user_id,
-                    agent_id=agent_id,
-                    run_id=run_id,
                 )
                 if profile and profile.get("id"):
                     self.profile_store.delete_profile(profile["id"])
@@ -398,16 +387,12 @@ class UserMemory:
     def profile(
         self,
         user_id: str,
-        agent_id: Optional[str] = None,
-        run_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Get user profile information.
 
         Args:
             user_id: User identifier
-            agent_id: Optional agent identifier for filtering
-            run_id: Optional run identifier for filtering
 
         Returns:
             Profile dictionary with the following keys:
@@ -423,8 +408,6 @@ class UserMemory:
 
         profile = self.profile_store.get_profile(
             user_id=user_id,
-            agent_id=agent_id,
-            run_id=run_id,
         )
         if profile:
             return {
@@ -459,8 +442,6 @@ class UserMemory:
             # Get profile first to obtain profile_id
             profile = self.profile_store.get_profile(
                 user_id=user_id,
-                agent_id=agent_id,
-                run_id=run_id,
             )
             
             if profile and profile.get("id"):
