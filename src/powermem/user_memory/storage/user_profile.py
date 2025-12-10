@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-from sqlalchemy import and_
+from sqlalchemy import and_, JSON
 
 from ...storage.oceanbase import constants
 from ...utils.utils import serialize_datetime, generate_snowflake_id, get_current_datetime
@@ -105,6 +105,7 @@ class OceanBaseUserProfileStore(UserProfileStoreBase):
                 Column("agent_id", String(128)),  # Agent identifier
                 Column("run_id", String(128)),  # Run identifier
                 Column("profile_content", LONGTEXT),
+                Column("topics", JSON),  # Structured topics (main topics and sub-topics)
                 Column("created_at", String(128)),
                 Column("updated_at", String(128)),
             ]
