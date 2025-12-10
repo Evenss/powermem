@@ -533,6 +533,29 @@ class UserMemory:
 
     def profile(
         self,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Get user profile information.
+
+        Args:
+            user_id: User identifier
+
+        Returns:
+            Profile dictionary with the following keys:
+            - "id" (int): Profile ID
+            - "user_id" (str): User identifier
+            - "profile_content" (str): Profile content text
+            - "topics" (dict): Structured topics dictionary (filtered if main_topic or sub_topic parameter is provided)
+            - "created_at" (str): Creation timestamp in ISO format
+            - "updated_at" (str): Last update timestamp in ISO format
+            or empty dict if not found
+        """
+
+        return self.profile_store.get_profile_by_user_id(user_id)
+
+    def profile_list(
+        self,
         user_id: Optional[str] = None,
         main_topic: Optional[List[str]] = None,
         sub_topic: Optional[List[str]] = None,
