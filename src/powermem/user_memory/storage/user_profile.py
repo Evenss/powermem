@@ -7,7 +7,7 @@ This module provides storage for user profile information extracted from convers
 import logging
 from typing import Optional, Dict, Any, List
 
-from sqlalchemy import and_, or_, func, literal, null
+from sqlalchemy import and_, or_, func, literal, null, Index
 
 from ...storage.oceanbase import constants
 from ...utils.utils import serialize_datetime, generate_snowflake_id, get_current_datetime
@@ -101,19 +101,22 @@ class OceanBaseUserProfileStore(UserProfileStoreBase):
                 # Primary key - Snowflake ID (BIGINT without AUTO_INCREMENT)
                 Column(self.primary_field, BigInteger, primary_key=True, autoincrement=False),
                 Column("user_id", String(128)),  # User identifier
-                Column("agent_id", String(128)),  # Agent identifier
-                Column("run_id", String(128)),  # Run identifier
                 Column("profile_content", LONGTEXT),
                 Column("topics", JSON),  # Structured topics (main topics and sub-topics)
                 Column("created_at", String(128)),
                 Column("updated_at", String(128)),
             ]
-
+            
+            # Define regular indexes
+            indexes = [
+                Index("idx_user_id", "user_id"),
+            ]
+            
             # Create table without vector index (simple table)
             self.obvector.create_table_with_index_params(
                 table_name=self.table_name,
                 columns=cols,
-                indexes=None,
+                indexes=indexes,
                 vidxs=None,
                 partitions=None,
             )
@@ -130,35 +133,25 @@ class OceanBaseUserProfileStore(UserProfileStoreBase):
             user_id: str,
             profile_content: Optional[str] = None,
             topics: Optional[Dict[str, Any]] = None,
-            agent_id: Optional[str] = None,
-            run_id: Optional[str] = None,
     ) -> int:
         """
-        Save or update user profile based on unique combination of user_id, agent_id, run_id.
+        Save or update user profile based on unique combination of user_id.
         If a record exists with the same combination, update it; otherwise, insert a new record.
 
         Args:
             user_id: User identifier
             profile_content: Profile content text (for non-structured profile)
             topics: Structured topics dictionary (for structured profile)
-            agent_id: Optional agent identifier
-            run_id: Optional run identifier
 
         Returns:
             Profile ID (existing or newly generated Snowflake ID)
         """
         now = serialize_datetime(get_current_datetime())
 
-        # Normalize empty strings to None for comparison
-        agent_id_normalized = agent_id or ""
-        run_id_normalized = run_id or ""
-
         # Check if profile exists with the same combination
         with self.obvector.engine.connect() as conn:
             conditions = [
                 self.table.c.user_id == user_id,
-                self.table.c.agent_id == agent_id_normalized,
-                self.table.c.run_id == run_id_normalized,
             ]
 
             stmt = self.table.select().where(and_(*conditions)).limit(1)
@@ -191,8 +184,6 @@ class OceanBaseUserProfileStore(UserProfileStoreBase):
                 insert_values = {
                     "id": profile_id,
                     "user_id": user_id,
-                    "agent_id": agent_id_normalized,
-                    "run_id": run_id_normalized,
                     "created_at": now,
                     **values,
                 }
@@ -203,78 +194,29 @@ class OceanBaseUserProfileStore(UserProfileStoreBase):
 
         return profile_id
 
-    def get_profile(
-            self,
-            user_id: Optional[str] = None,
-            agent_id: Optional[str] = None,
-            run_id: Optional[str] = None,
-            main_topic: Optional[List[str]] = None,
-            sub_topic: Optional[List[str]] = None,
-    ) -> Optional[Dict[str, Any]]:
+    def get_profile_by_user_id(self, user_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get user profile by user_id and optional filters.
+        Get user profile by user_id only, returning the unique record.
 
         Args:
-            user_id: User identifier
-            agent_id: Optional agent identifier for filtering
-            run_id: Optional run identifier for filtering
-            main_topic: Optional list of main topic names to filter
-            sub_topic: Optional list of sub topic names to filter by
+            user_id: User identifier (required)
 
         Returns:
             Profile dictionary with the following keys:
             - "id" (int): Profile ID
             - "user_id" (str): User identifier
-            - "agent_id" (str): Agent identifier
-            - "run_id" (str): Run identifier
             - "profile_content" (str): Profile content text
-            - "topics" (dict): Structured topics dictionary (filtered if main_topic or sub_topic provided)
+            - "topics" (dict): Structured topics dictionary
             - "created_at" (str): Creation timestamp in ISO format
             - "updated_at" (str): Last update timestamp in ISO format
             or None if not found
         """
         with self.obvector.engine.connect() as conn:
-            # Build where conditions
-            conditions = [self.table.c.user_id == user_id,
-                          self.table.c.agent_id == (agent_id or ""),
-                          self.table.c.run_id == (run_id or "")]
+            # Build where condition for user_id only
+            condition = self.table.c.user_id == user_id
 
-            # Add JSON filtering conditions for main_topic and sub_topic
-            if main_topic and len(main_topic) > 0:
-                # Check if any of the main topics exist in the JSON
-                # Use JSON_CONTAINS_PATH to check if main topic exists
-                main_topic_conditions = []
-                for mt in main_topic:
-                    # Format: JSON_CONTAINS_PATH(topics, 'one', '$.main_topic') = 1
-                    main_topic_conditions.append(
-                        func.json_contains_path(
-                            self.table.c.topics,
-                            literal('one'),
-                            literal(f"$.{mt}")
-                        ) == 1
-                    )
-                if main_topic_conditions:
-                    conditions.append(or_(*main_topic_conditions))
-
-            if sub_topic and len(sub_topic) > 0:
-                # Check if any of the sub topics exist in any main topic
-                # Use JSON_SEARCH to find sub topic in any main topic
-                sub_topic_conditions = []
-                for st in sub_topic:
-                    # Format: JSON_SEARCH(topics, 'one', 'sub_topic', NULL, '$.*') IS NOT NULL
-                    sub_topic_conditions.append(
-                        func.json_search(
-                            self.table.c.topics,
-                            literal('one'),
-                            literal(st),
-                            null(),
-                            literal('$.*')
-                        ).isnot(None)
-                    )
-                if sub_topic_conditions:
-                    conditions.append(or_(*sub_topic_conditions))
-
-            stmt = self.table.select().where(and_(*conditions))
+            # Build select statement
+            stmt = self.table.select().where(condition)
 
             # Order by id desc to get the latest profile
             stmt = stmt.order_by(desc(self.table.c.id))
@@ -284,23 +226,189 @@ class OceanBaseUserProfileStore(UserProfileStoreBase):
             row = result.fetchone()
 
             if row:
-                topics = getattr(row, "topics", None)
-
-                # Filter topics in memory after SQL filtering (to return only matching parts)
-                if topics and isinstance(topics, dict) and (main_topic or sub_topic):
-                    topics = self._filter_topics_in_memory(topics, main_topic, sub_topic)
-
                 return {
                     "id": row.id,
                     "user_id": row.user_id,
-                    "agent_id": row.agent_id,
-                    "run_id": row.run_id,
                     "profile_content": getattr(row, "profile_content", None),
-                    "topics": topics,
+                    "topics": getattr(row, "topics", None),
                     "created_at": row.created_at,
                     "updated_at": row.updated_at,
                 }
             return None
+
+    def _build_json_path_condition(self, json_path: str) -> Any:
+        """
+        Build JSON path condition for filtering.
+
+        Args:
+            json_path: JSON path in format "$.main_topic" or "$.main_topic.sub_topic"
+
+        Returns:
+            SQLAlchemy condition expression
+        """
+        return func.json_contains_path(
+            self.table.c.topics,
+            literal('one'),
+            literal(json_path)
+        ) == 1
+
+    def _build_topic_value_condition(self, value: str) -> Any:
+        """
+        Build topic value search condition for exact match.
+
+        Args:
+            value: Value to search for in topics JSON
+
+        Returns:
+            SQLAlchemy condition expression
+        """
+        return func.json_search(
+            self.table.c.topics,
+            literal('one'),
+            literal(str(value))
+        ).isnot(None)
+
+    def _build_filter_conditions(
+            self,
+            user_id: Optional[str],
+            main_topic: Optional[List[str]],
+            sub_topic: Optional[List[str]],
+            topic_value: Optional[List[str]],
+    ) -> List[Any]:
+        """
+        Build SQL filter conditions based on provided filters.
+
+        Args:
+            user_id: User identifier filter
+            main_topic: List of main topic names to filter
+            sub_topic: List of sub topic paths to filter
+            topic_value: List of topic values to filter by exact match
+
+        Returns:
+            List of SQLAlchemy condition expressions
+        """
+        conditions = []
+
+        # User ID filter
+        if user_id is not None:
+            conditions.append(self.table.c.user_id == user_id)
+
+        # Main topic filter
+        if main_topic:
+            main_topic_conditions = [
+                self._build_json_path_condition(f"$.{mt}")
+                for mt in main_topic
+            ]
+            if main_topic_conditions:
+                conditions.append(or_(*main_topic_conditions))
+
+        # Sub topic filter
+        if sub_topic:
+            sub_topic_conditions = [
+                self._build_json_path_condition(f"$.{st}")
+                for st in sub_topic
+                if '.' in st  # Only process full path format
+            ]
+            if sub_topic_conditions:
+                conditions.append(or_(*sub_topic_conditions))
+
+        # Topic value filter (exact match)
+        if topic_value:
+            topic_value_conditions = [
+                self._build_topic_value_condition(tv)
+                for tv in topic_value
+                if tv is not None
+            ]
+            if topic_value_conditions:
+                conditions.append(or_(*topic_value_conditions))
+
+        return conditions
+
+    def _build_profile_dict(self, row: Any, main_topic: Optional[List[str]], sub_topic: Optional[List[str]]) -> Dict[str, Any]:
+        """
+        Build profile dictionary from database row.
+
+        Args:
+            row: Database row result
+            main_topic: Optional list of main topic names for filtering
+            sub_topic: Optional list of sub topic paths for filtering
+
+        Returns:
+            Profile dictionary
+        """
+        topics = getattr(row, "topics", None)
+
+        # Filter topics in memory after SQL filtering (to return only matching parts)
+        if topics and isinstance(topics, dict) and (main_topic or sub_topic):
+            topics = self._filter_topics_in_memory(topics, main_topic, sub_topic)
+
+        return {
+            "id": row.id,
+            "user_id": row.user_id,
+            "profile_content": getattr(row, "profile_content", None),
+            "topics": topics,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+
+    def get_profile(
+            self,
+            user_id: Optional[str] = None,
+            main_topic: Optional[List[str]] = None,
+            sub_topic: Optional[List[str]] = None,
+            topic_value: Optional[List[str]] = None,
+            limit: Optional[int] = 100,
+            offset: Optional[int] = 0,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get user profiles by user_id and optional filters.
+
+        Args:
+            user_id: User identifier
+            main_topic: Optional list of main topic names to filter
+            sub_topic: Optional list of sub topic names to filter by
+            topic_value: Optional list of topic values to filter by exact match
+            limit: Optional limit on the number of profiles to return (default: 100)
+            offset: Optional offset for pagination
+
+        Returns:
+            List of profile dictionaries, each with the following keys:
+            - "id" (int): Profile ID
+            - "user_id" (str): User identifier
+            - "profile_content" (str): Profile content text
+            - "topics" (dict): Structured topics dictionary (filtered if main_topic or sub_topic provided)
+            - "created_at" (str): Creation timestamp in ISO format
+            - "updated_at" (str): Last update timestamp in ISO format
+            Returns empty list if no profiles found
+        """
+        with self.obvector.engine.connect() as conn:
+            # Build filter conditions
+            conditions = self._build_filter_conditions(
+                user_id, main_topic, sub_topic, topic_value
+            )
+
+            # Build select statement
+            stmt = self.table.select()
+            if conditions:
+                stmt = stmt.where(and_(*conditions))
+
+            # Order by id desc to get the latest profiles first
+            stmt = stmt.order_by(desc(self.table.c.id))
+
+            # Apply pagination
+            if offset and offset > 0:
+                stmt = stmt.offset(offset)
+            if limit and limit > 0:
+                stmt = stmt.limit(limit)
+
+            # Execute query and build results
+            result = conn.execute(stmt)
+            rows = result.fetchall()
+
+            return [
+                self._build_profile_dict(row, main_topic, sub_topic)
+                for row in rows
+            ]
 
     def _filter_topics_in_memory(
             self,
@@ -315,7 +423,8 @@ class OceanBaseUserProfileStore(UserProfileStoreBase):
         Args:
             topics: Full topics dictionary
             main_topic: Optional list of main topic names to include
-            sub_topic: Optional list of sub topic names to include
+            sub_topic: Optional list of sub topic paths to include. Each path should be in the format
+                      "main_topic.sub_topic", e.g., ["basic_information.user_name"]
 
         Returns:
             Filtered topics dictionary
@@ -341,7 +450,14 @@ class OceanBaseUserProfileStore(UserProfileStoreBase):
                     # Check if sub topic should be included
                     include_sub = True
                     if sub_topic and len(sub_topic) > 0:
-                        include_sub = any(st_key.lower() == s.lower() for s in sub_topic)
+                        # Support both full path format (e.g., "main_topic.sub_topic") and simple sub_topic name
+                        include_sub = any(
+                            # Match full path: "main_topic.sub_topic"
+                            ('.' in s and s.lower() == f"{mt.lower()}.{st_key.lower()}") or
+                            # Match simple sub_topic name (backward compatibility)
+                            ('.' not in s and st_key.lower() == s.lower())
+                            for s in sub_topic
+                        )
 
                     if include_sub:
                         filtered_sub[st_key] = st_value

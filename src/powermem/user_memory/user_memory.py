@@ -151,8 +151,6 @@ class UserMemory:
             extracted_data = self._extract_topics(
                 messages=messages,
                 user_id=user_id,
-                agent_id=agent_id,
-                run_id=run_id,
                 custom_topics=custom_topics,
                 strict_mode=strict_mode,
             )
@@ -162,8 +160,6 @@ class UserMemory:
             extracted_data = self._extract_profile(
                 messages=messages,
                 user_id=user_id,
-                agent_id=agent_id,
-                run_id=run_id,
             )
             result_key = "profile_content"
         
@@ -173,8 +169,6 @@ class UserMemory:
             extracted_data=extracted_data,
             result_key=result_key,
             user_id=user_id,
-            agent_id=agent_id,
-            run_id=run_id,
         )
 
     def _save_profile_and_build_result(
@@ -183,8 +177,6 @@ class UserMemory:
         extracted_data: Any,
         result_key: str,
         user_id: str,
-        agent_id: Optional[str],
-        run_id: Optional[str],
     ) -> Dict[str, Any]:
         """
         Save extracted profile data and build result dictionary.
@@ -194,9 +186,7 @@ class UserMemory:
             extracted_data: Extracted profile data (topics dict or profile_content str)
             result_key: Key to use in result dict ("topics" or "profile_content")
             user_id: User identifier
-            agent_id: Optional agent identifier
-            run_id: Optional run identifier
-        
+
         Returns:
             Combined result dictionary with profile extraction results
         """
@@ -204,8 +194,6 @@ class UserMemory:
             # Prepare save_profile arguments
             save_kwargs = {
                 "user_id": user_id,
-                "agent_id": agent_id,
-                "run_id": run_id,
             }
             if result_key == "topics":
                 save_kwargs["topics"] = extracted_data
@@ -230,8 +218,6 @@ class UserMemory:
     def _get_existing_profile_data(
         self,
         user_id: str,
-        agent_id: Optional[str],
-        run_id: Optional[str],
         data_key: str,
     ) -> Optional[Any]:
         """
@@ -239,19 +225,13 @@ class UserMemory:
         
         Args:
             user_id: User identifier
-            agent_id: Optional agent identifier
-            run_id: Optional run identifier
             data_key: Key to retrieve ("profile_content" or "topics")
         
         Returns:
             Existing profile data or None if not found
         """
         try:
-            profile = self.profile_store.get_profile(
-                user_id=user_id,
-                agent_id=agent_id,
-                run_id=run_id,
-            )
+            profile = self.profile_store.get_profile_by_user_id(user_id)
             if profile and profile.get(data_key):
                 data = profile[data_key]
                 logger.debug(f"Found existing {data_key} for user_id: {user_id}, will update based on new conversation")
@@ -287,8 +267,6 @@ class UserMemory:
         self,
         messages: Any,
         user_id: str,
-        agent_id: Optional[str] = None,
-        run_id: Optional[str] = None,
     ) -> str:
         """
         Extract user profile information from conversation using LLM.
@@ -297,8 +275,6 @@ class UserMemory:
         Args:
             messages: Conversation messages (str, dict, or list[dict])
             user_id: User identifier
-            agent_id: Optional agent identifier
-            run_id: Optional run identifier
 
         Returns:
             Extracted profile content as text string, or empty string if no profile found
@@ -312,8 +288,6 @@ class UserMemory:
         # Get existing profile if available
         existing_profile = self._get_existing_profile_data(
             user_id=user_id,
-            agent_id=agent_id,
-            run_id=run_id,
             data_key="profile_content",
         )
         
@@ -341,8 +315,6 @@ class UserMemory:
         self,
         messages: Any,
         user_id: str,
-        agent_id: Optional[str] = None,
-        run_id: Optional[str] = None,
         custom_topics: Optional[str] = None,
         strict_mode: bool = False,
     ) -> Optional[Dict[str, Any]]:
@@ -353,8 +325,6 @@ class UserMemory:
         Args:
             messages: Conversation messages (str, dict, or list[dict])
             user_id: User identifier
-            agent_id: Optional agent identifier
-            run_id: Optional run identifier
             custom_topics: Optional custom topics JSON string. Format: {"main_topic": {"sub_topic": "description", ...}}
             strict_mode: If True, only output topics from the provided list
 
@@ -370,8 +340,6 @@ class UserMemory:
         # Get existing topics if available
         existing_topics = self._get_existing_profile_data(
             user_id=user_id,
-            agent_id=agent_id,
-            run_id=run_id,
             data_key="topics",
         )
         
@@ -436,11 +404,7 @@ class UserMemory:
         
         # Add profile if requested and user_id is provided
         if add_profile and user_id:
-            profile = self.profile_store.get_profile(
-                user_id=user_id,
-                agent_id=agent_id,
-                run_id=run_id,
-            )
+            profile = self.profile_store.get_profile_by_user_id(user_id)
             if profile:
                 if profile.get("profile_content"):
                     search_result["profile_content"] = profile["profile_content"]
@@ -501,10 +465,7 @@ class UserMemory:
         # Delete profile if requested and user_id is provided
         if delete_profile and user_id:
             try:
-                profile = self.profile_store.get_profile(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                )
+                profile = self.profile_store.get_profile_by_user_id(user_id)
                 if profile and profile.get("id"):
                     self.profile_store.delete_profile(profile["id"])
                     logger.info(f"Deleted profile for user_id: {user_id}, agent_id: {agent_id}")
@@ -537,16 +498,12 @@ class UserMemory:
         # Delete profile if requested and user_id is provided
         if delete_profile and user_id:
             try:
-                profile = self.profile_store.get_profile(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    run_id=run_id,
-                )
+                profile = self.profile_store.get_profile_by_user_id(user_id)
                 if profile and profile.get("id"):
                     self.profile_store.delete_profile(profile["id"])
-                    logger.info(f"Deleted profile for user_id: {user_id}, agent_id: {agent_id}, run_id: {run_id}")
+                    logger.info(f"Deleted profile for user_id: {user_id}")
             except Exception as e:
-                logger.warning(f"Failed to delete profile for user_id: {user_id}, agent_id: {agent_id}, run_id: {run_id}: {e}")
+                logger.warning(f"Failed to delete profile for user_id: {user_id}: {e}")
         
         return result
 
@@ -577,93 +534,66 @@ class UserMemory:
     def profile(
         self,
         user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        run_id: Optional[str] = None,
         main_topic: Optional[List[str]] = None,
         sub_topic: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+        topic_value: Optional[List[str]] = None,
+        limit: Optional[int] = 100,
+        offset: Optional[int] = 0,
+    ) -> List[Dict[str, Any]]:
         """
         Get user profile information.
 
         Args:
             user_id: User identifier
-            agent_id: Optional agent identifier for filtering
-            run_id: Optional run identifier for filtering
             main_topic: Optional list of main topic names to filter
-            sub_topic: Optional list of sub topic names to filter
+            sub_topic: Optional list of sub topic paths to filter. Each path should be in the format
+                   "main_topic.sub_topic", e.g., ["basic_information.user_name"].
                    If provided, only returns profiles that contain the specified main topics or sub topics.
-                   Filtering is performed at SQL level for better performance.
+            topic_value: Optional list of topic values to filter by exact match. 
+            limit: Optional limit on the number of profiles to return (default: 100)
+            offset: Optional offset for pagination (default: 0)
 
         Returns:
-            Profile dictionary with the following keys:
+            List of profile dictionaries, each with the following keys:
             - "id" (int): Profile ID
             - "user_id" (str): User identifier
-            - "agent_id" (str): Agent identifier
-            - "run_id" (str): Run identifier
             - "profile_content" (str): Profile content text
             - "topics" (dict): Structured topics dictionary (filtered if main_topic or sub_topic parameter is provided)
             - "created_at" (str): Creation timestamp in ISO format
             - "updated_at" (str): Last update timestamp in ISO format
-            or empty dict if not found
+            Returns empty list if no profiles found
         """
 
-        profile = self.profile_store.get_profile(
-            user_id=user_id,
-            agent_id=agent_id,
-            run_id=run_id,
-            main_topic=main_topic,
-            sub_topic=sub_topic,
-        )
-        if profile:
-            return {
-                "id": profile["id"],
-                "user_id": profile["user_id"],
-                "agent_id": profile["agent_id"],
-                "run_id": profile["run_id"],
-                "profile_content": profile.get("profile_content"),
-                "topics": profile.get("topics"),
-                "created_at": profile["created_at"],
-                "updated_at": profile["updated_at"],
-            }
-        return {}
+        return self.profile_store.get_profile(user_id, main_topic, sub_topic, topic_value, limit, offset)
     
 
     def delete_profile(
         self,
         user_id: str,
-        agent_id: Optional[str] = None,
-        run_id: Optional[str] = None,
     ) -> bool:
         """
-        Delete user profile by user_id, agent_id, and run_id.
+        Delete user profile by user_id.
 
         Args:
             user_id: User identifier (required)
-            agent_id: Optional agent identifier for filtering
-            run_id: Optional run identifier for filtering
 
         Returns:
             True if profile was deleted successfully, False if profile not found
         """
         try:
-            # Get profile first to obtain profile_id
-            profile = self.profile_store.get_profile(
-                user_id=user_id,
-                agent_id=agent_id,
-                run_id=run_id,
-            )
+            profile = self.profile_store.get_profile_by_user_id(user_id)
             
             if profile and profile.get("id"):
                 # Delete profile using profile_id
                 result = self.profile_store.delete_profile(profile["id"])
                 if result:
-                    logger.info(f"Deleted profile for user_id: {user_id}, agent_id: {agent_id}, run_id: {run_id}")
+                    logger.info(f"Deleted profile for user_id: {user_id}")
                 return result
             else:
-                logger.debug(f"Profile not found for user_id: {user_id}, agent_id: {agent_id}, run_id: {run_id}")
+                logger.debug(f"Profile not found for user_id: {user_id}")
                 return False
                 
         except Exception as e:
-            logger.error(f"Failed to delete profile for user_id: {user_id}, agent_id: {agent_id}, run_id: {run_id}: {e}")
+            logger.error(f"Failed to delete profile for user_id: {user_id}: {e}")
             raise
 
