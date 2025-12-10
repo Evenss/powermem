@@ -5,7 +5,7 @@ This module defines the user profile storage interface that all implementations 
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 
 class UserProfileStoreBase(ABC):
@@ -19,7 +19,8 @@ class UserProfileStoreBase(ABC):
     def save_profile(
         self,
         user_id: str,
-        profile_content: str,
+        profile_content: Optional[str] = None,
+        topics: Optional[Dict[str, Any]] = None,
         agent_id: Optional[str] = None,
         run_id: Optional[str] = None,
     ) -> int:
@@ -29,7 +30,8 @@ class UserProfileStoreBase(ABC):
 
         Args:
             user_id: User identifier
-            profile_content: Profile content text
+            profile_content: Profile content text (for non-structured profile)
+            topics: Structured topics dictionary (for structured profile)
             agent_id: Optional agent identifier
             run_id: Optional run identifier
 
@@ -41,17 +43,21 @@ class UserProfileStoreBase(ABC):
     @abstractmethod
     def get_profile(
         self,
-        user_id: str,
+        user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         run_id: Optional[str] = None,
+        main_topic: Optional[List[str]] = None,
+        sub_topic: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Get user profile by user_id and optional filters.
 
         Args:
-            user_id: User identifier
+            user_id: Optional User identifier
             agent_id: Optional agent identifier for filtering
             run_id: Optional run identifier for filtering
+            main_topic: Optional list of main topic names to filter by (SQL-level filtering)
+            sub_topic: Optional list of sub topic names to filter by (SQL-level filtering)
 
         Returns:
             Profile dictionary with id, user_id, profile_content, created_at, updated_at, etc., or None if not found
