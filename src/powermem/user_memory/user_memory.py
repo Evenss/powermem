@@ -398,8 +398,6 @@ class UserMemory:
             Profile dictionary with the following keys:
             - "id" (int): Profile ID
             - "user_id" (str): User identifier
-            - "agent_id" (str): Agent identifier
-            - "run_id" (str): Run identifier
             - "profile_content" (str): Profile content text
             - "created_at" (str): Creation timestamp in ISO format
             - "updated_at" (str): Last update timestamp in ISO format
@@ -413,8 +411,6 @@ class UserMemory:
             return {
                 "id": profile["id"],
                 "user_id": profile["user_id"],
-                "agent_id": profile["agent_id"],
-                "run_id": profile["run_id"],
                 "profile_content": profile["profile_content"],
                 "created_at": profile["created_at"],
                 "updated_at": profile["updated_at"],
@@ -424,16 +420,12 @@ class UserMemory:
     def delete_profile(
         self,
         user_id: str,
-        agent_id: Optional[str] = None,
-        run_id: Optional[str] = None,
     ) -> bool:
         """
         Delete user profile by user_id, agent_id, and run_id.
 
         Args:
             user_id: User identifier (required)
-            agent_id: Optional agent identifier for filtering
-            run_id: Optional run identifier for filtering
 
         Returns:
             True if profile was deleted successfully, False if profile not found
@@ -448,10 +440,10 @@ class UserMemory:
                 # Delete profile using profile_id
                 result = self.profile_store.delete_profile(profile["id"])
                 if result:
-                    logger.info(f"Deleted profile for user_id: {user_id}, agent_id: {agent_id}, run_id: {run_id}")
+                    logger.info(f"Deleted profile for user_id: {user_id}")
                 return result
             else:
-                logger.debug(f"Profile not found for user_id: {user_id}, agent_id: {agent_id}, run_id: {run_id}")
+                logger.debug(f"Profile not found for user_id: {user_id}")
                 return False
                 
         except Exception as e:
