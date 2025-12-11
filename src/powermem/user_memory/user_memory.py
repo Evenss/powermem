@@ -145,7 +145,7 @@ class UserMemory:
         
         # Step 2: Extract profile information
         logger.info(f"Step 2: Extracting profile information for user_id: {user_id}, profile_type: {profile_type}")
-        
+
         if profile_type == "topics":
             # Extract structured topics
             extracted_data = self._extract_topics(
@@ -162,7 +162,7 @@ class UserMemory:
                 user_id=user_id,
             )
             result_key = "profile_content"
-        
+
         # Save profile and build result (common logic for both types)
         return self._save_profile_and_build_result(
             memory_result=memory_result,
@@ -180,7 +180,7 @@ class UserMemory:
     ) -> Dict[str, Any]:
         """
         Save extracted profile data and build result dictionary.
-        
+
         Args:
             memory_result: Result from memory.add() operation
             extracted_data: Extracted profile data (topics dict or profile_content str)
@@ -199,7 +199,7 @@ class UserMemory:
                 save_kwargs["topics"] = extracted_data
             else:
                 save_kwargs["profile_content"] = extracted_data
-            
+
             # Save profile to UserProfileStore
             profile_id = self.profile_store.save_profile(**save_kwargs)
             logger.info(f"Profile {result_key} saved for user_id: {user_id}, profile_id: {profile_id}")
@@ -222,11 +222,11 @@ class UserMemory:
     ) -> Optional[Any]:
         """
         Get existing profile data (profile_content or topics) from storage.
-        
+
         Args:
             user_id: User identifier
             data_key: Key to retrieve ("profile_content" or "topics")
-        
+
         Returns:
             Existing profile data or None if not found
         """
@@ -247,11 +247,11 @@ class UserMemory:
     ) -> str:
         """
         Call LLM to extract profile information.
-        
+
         Args:
             system_prompt: System prompt for LLM
             user_message: User message for LLM
-        
+
         Returns:
             LLM response text
         """
@@ -293,7 +293,7 @@ class UserMemory:
         
         # Generate system prompt and user message
         system_prompt, user_message = get_user_profile_extraction_prompt(
-            conversation_text, 
+            conversation_text,
             existing_profile=existing_profile
         )
         
@@ -336,13 +336,13 @@ class UserMemory:
         if not conversation_text or not conversation_text.strip():
             logger.debug("Empty conversation, skipping topic extraction")
             return None
-        
+
         # Get existing topics if available
         existing_topics = self._get_existing_profile_data(
             user_id=user_id,
             data_key="topics",
         )
-        
+
         # Generate system prompt and user message
         system_prompt, user_message = get_user_profile_topics_extraction_prompt(
             conversation_text,
@@ -350,20 +350,20 @@ class UserMemory:
             custom_topics=custom_topics,
             strict_mode=strict_mode,
         )
-        
+
         # Call LLM to extract topics
         try:
             topics_text = self._call_llm_for_extraction(system_prompt, user_message)
-            
+
             # Return None if response is empty or indicates no topics
             if not topics_text or topics_text.lower() in ["", "none", "no profile information", "no relevant information", "{}"]:
                 return None
-            
+
             topics = parse_json_from_text(topics_text, expected_type=dict)
             if topics is None:
                 raise ValueError(f"Invalid JSON format in topics response: {topics_text}")
             return topics
-            
+
         except Exception as e:
             logger.error(f"Error extracting topics: {e}")
             raise
@@ -572,7 +572,7 @@ class UserMemory:
             sub_topic: Optional list of sub topic paths to filter. Each path should be in the format
                    "main_topic.sub_topic", e.g., ["basic_information.user_name"].
                    If provided, only returns profiles that contain the specified main topics or sub topics.
-            topic_value: Optional list of topic values to filter by exact match. 
+            topic_value: Optional list of topic values to filter by exact match.
             limit: Optional limit on the number of profiles to return (default: 100)
             offset: Optional offset for pagination (default: 0)
 
@@ -588,7 +588,7 @@ class UserMemory:
         """
 
         return self.profile_store.get_profile(user_id, main_topic, sub_topic, topic_value, limit, offset)
-    
+
 
     def delete_profile(
         self,
