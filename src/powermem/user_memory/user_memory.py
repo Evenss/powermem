@@ -447,6 +447,6 @@ class UserMemory:
                 return False
                 
         except Exception as e:
-            logger.error(f"Failed to delete profile for user_id: {user_id}, agent_id: {agent_id}, run_id: {run_id}: {e}")
+            logger.error(f"Failed to delete profile for user_id: {user_id}: {e}")
             raise
 
