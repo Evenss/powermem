@@ -18,7 +18,7 @@ Each scenario is available as both:
  - [Scenario 6: Sub Stores](./scenario_6_sub_stores.md)
  - [Scenario 7: Multimodal Capability](./scenario_7_multimodal.md)
  - [Scenario 8: Ebbinghaus Forgetting Curve](./scenario_8_ebbinghaus_forgetting_curve.md)
-- [Scenario 9: User Profile Management](./scenario_9_user_memory.md)
+ - [Scenario 9: User Profile Management](./scenario_9_user_memory.md)
 
 ## Quick Start
 
