@@ -216,7 +216,7 @@ class OceanBaseUserProfileStore(UserProfileStoreBase):
             condition = self.table.c.user_id == user_id
 
             # Build select statement
-            stmt = self.table.select().where(condition)
+            stmt = self.table.select().where(and_(condition))
 
             # Order by id desc to get the latest profile
             stmt = stmt.order_by(desc(self.table.c.id))
