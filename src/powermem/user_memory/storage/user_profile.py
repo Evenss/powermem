@@ -106,12 +106,12 @@ class OceanBaseUserProfileStore(UserProfileStoreBase):
                 Column("created_at", String(128)),
                 Column("updated_at", String(128)),
             ]
-            
+
             # Define regular indexes
             indexes = [
                 Index("idx_user_id", "user_id"),
             ]
-            
+
             # Create table without vector index (simple table)
             self.obvector.create_table_with_index_params(
                 table_name=self.table_name,

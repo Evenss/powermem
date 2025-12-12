@@ -139,7 +139,7 @@ def get_user_profile_topics_extraction_prompt(
 ) -> Tuple[str, str]:
     """
     Generate the system prompt and user message for structured topic extraction.
-    
+
     Args:
         conversation: The conversation text to analyze
         existing_topics: Optional existing structured topics dictionary to update
@@ -153,7 +153,7 @@ def get_user_profile_topics_extraction_prompt(
             - All keys must be in snake_case (lowercase, underscores, no spaces)
             - Descriptions are for reference only and should NOT be used as keys in the output
         strict_mode: If True, only output topics from the provided list; if False, can extend
-        
+
     Returns:
         Tuple of (system_prompt, user_message):
         - system_prompt: Fixed instructions and context for the LLM
@@ -169,10 +169,10 @@ def get_user_profile_topics_extraction_prompt(
                 topics_dict = custom_topics
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid custom_topics JSON format: {e}")
-        
+
         if not isinstance(topics_dict, dict):
             raise ValueError("custom_topics must be a JSON object (dictionary)")
-        
+
         # Format topics as JSON for display (no conversion, use as-is)
         formatted_topics = json.dumps(topics_dict, ensure_ascii=False, indent=2)
         has_descriptions = True
@@ -180,7 +180,7 @@ def get_user_profile_topics_extraction_prompt(
         # Use default USER_PROFILE_TOPICS as-is
         formatted_topics = USER_PROFILE_TOPICS
         has_descriptions = False
-    
+
     # Build strict mode instruction
     if strict_mode:
         strict_instruction = """
@@ -191,7 +191,7 @@ you may omit it or place it under the most relevant existing topic."""
         strict_instruction = """
 You may extend the topic structure if needed, but try to use the provided topics when possible. 
 If you add new topics, use snake_case format (lowercase with underscores)."""
-    
+
     # Build description warning if custom_topics has descriptions
     description_warning = ""
     if custom_topics and has_descriptions:
@@ -199,7 +199,7 @@ If you add new topics, use snake_case format (lowercase with underscores)."""
 IMPORTANT: The descriptions shown in [Available Topics] are for reference only to help you understand what each topic represents.
 DO NOT use the descriptions as keys in your output. Only use the topic names (main_topic and sub_topic) as keys.
 For example, if you see "user_name: The user's full name", use "user_name" as the key, NOT "The user's full name"."""
-    
+
     # Build existing topics section
     existing_topics_section = ""
     if existing_topics:
@@ -210,7 +210,7 @@ For example, if you see "user_name: The user's full name", use "user_name" as th
 ```json
 {existing_topics_json}
 ```"""
-    
+
     # Build the prompt
     if custom_topics:
         topics_section = f"""[Available Topics]:
@@ -224,7 +224,7 @@ The following JSON structure defines the available topics for extraction:
 The following topics are for reference. All topic keys in your output must be in snake_case format (lowercase with underscores):
 {formatted_topics}
 """
-    
+
     system_prompt = f"""You are a user profile topic extraction specialist. Your task is to analyze conversations and extract user profile information as structured topics.
 
 {topics_section}{description_warning}
@@ -260,6 +260,6 @@ All keys must be in snake_case (lowercase with underscores). Values can be strin
 Remember: Use only the topic names as keys, NOT the descriptions."""
 
     user_message = conversation
-    
+
     return system_prompt, user_message
 

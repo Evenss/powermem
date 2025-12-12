@@ -205,13 +205,13 @@ class UserMemory:
             logger.info(f"Profile {result_key} saved for user_id: {user_id}, profile_id: {profile_id}")
         else:
             logger.debug(f"No profile {result_key} extracted for user_id: {user_id}")
-        
+
         # Build and return combined result
         result = memory_result.copy()
         result["profile_extracted"] = bool(extracted_data)
         if extracted_data:
             result[result_key] = extracted_data
-        
+
         return result
 
 
@@ -296,11 +296,11 @@ class UserMemory:
             conversation_text,
             existing_profile=existing_profile
         )
-        
+
         # Call LLM to extract profile
         try:
             profile_content = self._call_llm_for_extraction(system_prompt, user_message)
-            
+
             # Return empty string if response is empty or indicates no profile
             if not profile_content or profile_content.lower() in ["", "none", "no profile information", "no relevant information"]:
                 return ""
@@ -504,7 +504,7 @@ class UserMemory:
                     logger.info(f"Deleted profile for user_id: {user_id}")
             except Exception as e:
                 logger.warning(f"Failed to delete profile for user_id: {user_id}: {e}")
-        
+
         return result
 
     def get_all(
@@ -605,7 +605,7 @@ class UserMemory:
         """
         try:
             profile = self.profile_store.get_profile_by_user_id(user_id)
-            
+
             if profile and profile.get("id"):
                 # Delete profile using profile_id
                 result = self.profile_store.delete_profile(profile["id"])
