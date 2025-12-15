@@ -14,11 +14,13 @@ from copy import deepcopy
 
 from .base import MemoryBase
 from ..configs import MemoryConfig
+from ..integrations.embeddings.config.sparse_base import SparseEmbedderConfig
 from ..storage.factory import VectorStoreFactory, GraphStoreFactory
 from ..storage.adapter import StorageAdapter, SubStorageAdapter
 from ..intelligence.manager import IntelligenceManager
 from ..integrations.llm.factory import LLMFactory
 from ..integrations.embeddings.factory import EmbedderFactory
+from ..integrations.embeddings.sparse_factory import SparseEmbedderFactory
 from ..integrations.rerank.factory import RerankFactory
 from .telemetry import TelemetryManager
 from .audit import AuditLogger
@@ -232,17 +234,46 @@ class Memory(MemoryBase):
         # Pass vector_store_config so factory can extract embedding_model_dims for mock embeddings
         self.embedding = EmbedderFactory.create(self.embedding_provider, embedder_config, vector_store_config)
         
-        # Initialize storage adapter with embedding service
+        # Initialize sparse embedder if configured (only for OceanBase)
+        self.sparse_embedder = None
+        if self.storage_type.lower() == 'oceanbase':
+            sparse_config_obj = None
+            sparse_embedder_provider = None
+            
+            if self.memory_config and hasattr(self.memory_config, 'sparse_embedder') and self.memory_config.sparse_embedder:
+                sparse_config_obj = self.memory_config.sparse_embedder
+            elif self.config.get('sparse_embedder'):
+                sparse_config_obj = self.config.get('sparse_embedder')
+            
+            if sparse_config_obj:
+                try:
+                    # Handle SparseEmbedderConfig object or dict format
+                    if hasattr(sparse_config_obj, 'model') or hasattr(sparse_config_obj, 'api_key'):
+                        # It's a SparseEmbedderConfig object
+                        sparse_embedder_config = sparse_config_obj
+                    elif isinstance(sparse_config_obj, dict):
+                        sparse_embedder_provider = sparse_config_obj.get('provider')
+                        config_dict = sparse_config_obj.get('config', {})
+                        sparse_embedder_config = SparseEmbedderConfig(**config_dict)
+                    else:
+                        sparse_embedder_config = None
+                    
+                    self.sparse_embedder = SparseEmbedderFactory.create(sparse_embedder_provider, sparse_embedder_config)
+                    logger.info(f"Sparse embedder initialized: {sparse_embedder_provider}")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize sparse embedder: {e}")
+        
+        # Initialize storage adapter with embedding service and sparse embedder service
         # Automatically select adapter based on sub_stores configuration
         sub_stores_list = self.config.get('sub_stores', [])
         if sub_stores_list and self.storage_type.lower() == 'oceanbase':
             # Use SubStorageAdapter if sub stores are configured and using OceanBase
-            self.storage = SubStorageAdapter(vector_store, self.embedding)
+            self.storage = SubStorageAdapter(vector_store, self.embedding, self.sparse_embedder)
             logger.info("Using SubStorageAdapter with sub-store support")
         else:
             if sub_stores_list:
                 logger.warning("The sub_stores function currently only supports oceanbase")
-            self.storage = StorageAdapter(vector_store, self.embedding)
+            self.storage = StorageAdapter(vector_store, self.embedding, self.sparse_embedder)
             logger.info("Using basic StorageAdapter")
 
         self.intelligence = IntelligenceManager(self.config)
@@ -1071,7 +1102,7 @@ class Memory(MemoryBase):
                 run_id=run_id,
                 filters=filters,
                 limit=limit,
-                query=query  # Pass query text for hybrid search (vector + full-text)
+                query=query  # Pass query text for hybrid search (vector + full-text + sparse vector)
             )
             
             # Process results with intelligence manager (only if enabled to avoid unnecessary calls)
@@ -1416,7 +1447,7 @@ class Memory(MemoryBase):
                 vector_store_config = self._get_component_config('vector_store')
                 self.storage.vector_store = VectorStoreFactory.create(self.storage_type, vector_store_config)
                 # Update storage adapter
-                self.storage = StorageAdapter(self.storage.vector_store, self.embedding)
+                self.storage = StorageAdapter(self.storage.vector_store, self.embedding, self.sparse_embedder)
             
             # Reset graph store if enabled
             if self.enable_graph and hasattr(self.graph_store, "reset"):

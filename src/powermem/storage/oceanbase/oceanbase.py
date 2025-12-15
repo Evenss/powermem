@@ -65,7 +65,6 @@ class OceanBaseVectorStore(VectorStoreBase):
             vector_weight: float = 0.5,
             fts_weight: float = 0.5,
             sparse_weight: float = 0.25,
-            sparse_embedder: Optional[Any] = None,
             reranker: Optional[Any] = None,
             **kwargs,
     ):
@@ -96,7 +95,6 @@ class OceanBaseVectorStore(VectorStoreBase):
             vector_weight (float): Weight for vector search in hybrid search (default: 0.5).
             fts_weight (float): Weight for full-text search in hybrid search (default: 0.5).
             sparse_weight (Optional[float]): Weight for sparse vector search in hybrid search.
-            sparse_embedder (Optional[Any]): Sparse embedding generator (must have embed method).
             reranker (Optional[Any]): Reranker model for fine ranking.
         """
         self.normalize = normalize
@@ -107,7 +105,6 @@ class OceanBaseVectorStore(VectorStoreBase):
         self.vector_weight = vector_weight
         self.fts_weight = fts_weight
         self.sparse_weight = sparse_weight
-        self.sparse_embedder = sparse_embedder
         self.reranker = reranker
 
         # Validate fulltext parser
@@ -617,7 +614,13 @@ class OceanBaseVectorStore(VectorStoreBase):
 
         # Add hybrid search fields if enabled
         if self.include_sparse and "sparse_embedding" in payload:
-            record[self.sparse_vector_field] = payload["sparse_embedding"]  # SQLAlchemy JSON type handles serialization automatically
+            sparse_embedding = payload["sparse_embedding"]
+            # Convert dict to string format for SPARSEVECTOR type,like '{3:0.3, 4:0.4}'
+            if isinstance(sparse_embedding, dict):
+                sparse_vector_str = self._format_sparse_vector(sparse_embedding)
+                record[self.sparse_vector_field] = sparse_vector_str
+            else:
+                record[self.sparse_vector_field] = sparse_embedding
 
         # Always add full-text content (enabled by default)
         fulltext_content = payload.get("fulltext_content") or payload.get("data", "")
@@ -629,11 +632,12 @@ class OceanBaseVectorStore(VectorStoreBase):
                query: str,
                vectors: List[List[float]],
                limit: int = 5,
-               filters: Optional[Dict] = None) -> list[OutputData]:
+               filters: Optional[Dict] = None,
+               sparse_embedding: Optional[Dict[int, float]] = None) -> list[OutputData]:
         # Check if hybrid search is enabled, and we have query text
         # Full-text search is always enabled by default
         if self.hybrid_search and query:
-            return self._hybrid_search(query, vectors, limit, filters)
+            return self._hybrid_search(query, vectors, limit, filters, sparse_embedding)
         else:
             return self._vector_search(query, vectors, limit, filters)
 
@@ -840,41 +844,32 @@ class OceanBaseVectorStore(VectorStoreBase):
         """
         if not sparse_dict:
             return "{}"
-        formatted = "{" + ", ".join(f"{k}:{v}" for k, v in sparse_dict) + "}"
+        formatted = "{" + ", ".join(f"{k}:{v}" for k, v in sparse_dict.items()) + "}"
         return formatted
 
-    def _sparse_search(self, query: str, limit: int = 5, filters: Optional[Dict] = None) -> list[OutputData]:
+    def _sparse_search(self, sparse_embedding: Dict[int, float], limit: int = 5, filters: Optional[Dict] = None) -> list[OutputData]:
         """
         Perform sparse vector search using OceanBase SPARSEVECTOR.
         
         Args:
-            query: Search query text
+            sparse_embedding: Sparse embedding dictionary (token_id -> weight)
             limit: Maximum number of results to return
             filters: Optional filter conditions
             
         Returns:
             List of OutputData objects with search results
         """
-        # Check if sparse search is enabled and embedder is available
+        # Check if sparse search is enabled
         if not self.include_sparse:
             logger.debug("Sparse vector search is not enabled")
             return []
         
-        if not self.sparse_embedder:
-            logger.warning("Sparse embedder is not configured, skipping sparse search")
-            return []
-        
-        # Skip search if query is empty
-        if not query or not query.strip():
-            logger.debug("Sparse search query is empty, returning empty results.")
+        # Check if sparse embedding is provided
+        if not sparse_embedding or not isinstance(sparse_embedding, dict):
+            logger.debug("Sparse embedding not provided, skipping sparse search")
             return []
         
         try:
-            # Generate sparse vector from query text
-            sparse_embedding = self.sparse_embedder.embed(query)
-            if not sparse_embedding or not isinstance(sparse_embedding, dict):
-                logger.warning(f"Invalid sparse embedding format: {sparse_embedding}")
-                return []
             
             # Format sparse vector for SQL query
             sparse_vector_str = self._format_sparse_vector(sparse_embedding)
@@ -940,13 +935,14 @@ class OceanBaseVectorStore(VectorStoreBase):
             return []
 
     def _hybrid_search(self, query: str, vectors: List[List[float]], limit: int = 5, filters: Optional[Dict] = None,
+                       sparse_embedding: Optional[Dict[int, float]] = None,
                        fusion_method: str = "rrf", k: int = 60):
         """Perform hybrid search combining vector, full-text, and sparse vector search with optional reranking."""
         # Determine candidate limit for reranking
         candidate_limit = limit * 3 if self.reranker else limit
 
         # Determine which searches to perform
-        perform_sparse = self.include_sparse and self.sparse_embedder is not None
+        perform_sparse = self.include_sparse and sparse_embedding is not None
         
         # Perform searches in parallel for better performance
         search_tasks = []
@@ -961,7 +957,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             
             # Submit sparse vector search if enabled
             if perform_sparse:
-                sparse_future = executor.submit(self._sparse_search, query, candidate_limit, filters)
+                sparse_future = executor.submit(self._sparse_search, sparse_embedding, candidate_limit, filters)
                 search_tasks.append(('sparse', sparse_future))
             
             # Wait for all searches to complete and get results
@@ -997,7 +993,7 @@ class OceanBaseVectorStore(VectorStoreBase):
 
         # Step 1: Coarse ranking - Combine results using RRF or weighted fusion
         coarse_ranked_results = self._combine_search_results(
-            vector_results, fts_results, sparse_results, candidate_limit, fusion_method, k
+            vector_results, fts_results, sparse_results, candidate_limit, fusion_method, k, sparse_embedding
         )
         logger.debug(f"Coarse ranking completed, candidates: {len(coarse_ranked_results)}")
         
@@ -1070,19 +1066,19 @@ class OceanBaseVectorStore(VectorStoreBase):
 
     def _combine_search_results(self, vector_results: List[OutputData], fts_results: List[OutputData],
                                 sparse_results: Optional[List[OutputData]],
-                                limit: int, fusion_method: str = "rrf", k: int = 60):
+                                limit: int, fusion_method: str = "rrf", k: int = 60, sparse_embedding: Optional[Dict[int, float]] = None):
         """Combine and rerank vector, full-text, and sparse vector search results using RRF or weighted fusion."""
         if sparse_results is None:
             sparse_results = []
         
         if fusion_method == "rrf":
-            return self._rrf_fusion(vector_results, fts_results, sparse_results, limit, k)
+            return self._rrf_fusion(vector_results, fts_results, sparse_results, limit, k, sparse_embedding)
         else:
             return self._weighted_fusion(vector_results, fts_results, sparse_results, limit)
 
     def _rrf_fusion(self, vector_results: List[OutputData], fts_results: List[OutputData],
                     sparse_results: Optional[List[OutputData]],
-                    limit: int, k: int = 60):
+                    limit: int, k: int = 60, sparse_embedding: Optional[Dict[int, float]] = None):
         """
         Reciprocal Rank Fusion (RRF) for combining search results from vector, FTS, and sparse vector searches.
         
@@ -1095,7 +1091,7 @@ class OceanBaseVectorStore(VectorStoreBase):
         fts_w = self.fts_weight if self.fts_weight is not None else 0
         sparse_w = 0
 
-        if self.include_sparse and self.sparse_embedder is not None:
+        if self.include_sparse and sparse_results and sparse_embedding:
             sparse_w = self.sparse_weight if self.sparse_weight is not None else 0
         
         # Create mapping of document ID to result data
