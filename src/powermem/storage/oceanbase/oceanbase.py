@@ -64,7 +64,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             fulltext_parser: str = constants.DEFAULT_FULLTEXT_PARSER,
             vector_weight: float = 0.5,
             fts_weight: float = 0.5,
-            sparse_weight: Optional[float] = None,
+            sparse_weight: float = 0.25,
             sparse_embedder: Optional[Any] = None,
             reranker: Optional[Any] = None,
             **kwargs,
@@ -533,6 +533,27 @@ class OceanBaseVectorStore(VectorStoreBase):
         padded_row = list(row) + [None] * (12 - len(row))
         return tuple(padded_row[:12])
 
+    def _get_standard_select_columns(self) -> List:
+        """
+        Get the standard column list for SELECT queries.
+        
+        Returns:
+            List of SQLAlchemy column elements for standard fields.
+        """
+        return [
+            self.table.c[self.text_field],
+            self.table.c[self.metadata_field],
+            self.table.c[self.primary_field],
+            self.table.c["user_id"],
+            self.table.c["agent_id"],
+            self.table.c["run_id"],
+            self.table.c["actor_id"],
+            self.table.c["hash"],
+            self.table.c["created_at"],
+            self.table.c["updated_at"],
+            self.table.c["category"],
+        ]
+
     def _build_standard_metadata(self, user_id: str, agent_id: str, run_id: str,
                                  actor_id: str, hash_val: str, created_at: str,
                                  updated_at: str, category: str, metadata_json: str) -> Dict:
@@ -722,18 +743,7 @@ class OceanBaseVectorStore(VectorStoreBase):
         # Build custom query to include score field
         try:
             # Build select statement with specific columns AND score
-            columns = [
-                self.table.c[self.text_field],
-                self.table.c[self.metadata_field],
-                self.table.c[self.primary_field],
-                self.table.c["user_id"],
-                self.table.c["agent_id"],
-                self.table.c["run_id"],
-                self.table.c["actor_id"],
-                self.table.c["hash"],
-                self.table.c["created_at"],
-                self.table.c["updated_at"],
-                self.table.c["category"],
+            columns = self._get_standard_select_columns() + [
                 # Add the score calculation as a column
                 text(f"MATCH({self.fulltext_field}) AGAINST(:query IN NATURAL LANGUAGE MODE) as score").bindparams(
                     bindparam("query", query)
@@ -775,18 +785,7 @@ class OceanBaseVectorStore(VectorStoreBase):
                     fallback_conditions.extend(filter_where_clause)
 
                 # Build fallback query with default score
-                columns = [
-                    self.table.c[self.text_field],
-                    self.table.c[self.metadata_field],
-                    self.table.c[self.primary_field],
-                    self.table.c["user_id"],
-                    self.table.c["agent_id"],
-                    self.table.c["run_id"],
-                    self.table.c["actor_id"],
-                    self.table.c["hash"],
-                    self.table.c["created_at"],
-                    self.table.c["updated_at"],
-                    self.table.c["category"],
+                columns = self._get_standard_select_columns() + [
                     # Default score for LIKE search
                     '1.0 as score'
                 ]
@@ -885,18 +884,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             
             # Build the sparse vector search query
             # Use negative_inner_product for ordering (lower is better, so we negate)
-            columns = [
-                self.table.c[self.text_field],
-                self.table.c[self.metadata_field],
-                self.table.c[self.primary_field],
-                self.table.c["user_id"],
-                self.table.c["agent_id"],
-                self.table.c["run_id"],
-                self.table.c["actor_id"],
-                self.table.c["hash"],
-                self.table.c["created_at"],
-                self.table.c["updated_at"],
-                self.table.c["category"],
+            columns = self._get_standard_select_columns() + [
                 # Add the distance calculation as a column (negative_inner_product)
                 # Directly embed sparse_vector_str in SQL as per OceanBase syntax
                 text(f"negative_inner_product({self.sparse_vector_field}, '{sparse_vector_str}') as score")
@@ -1098,24 +1086,17 @@ class OceanBaseVectorStore(VectorStoreBase):
         """
         Reciprocal Rank Fusion (RRF) for combining search results from vector, FTS, and sparse vector searches.
         
-        Uses weights configured at initialization. If all three weights (vector_weight, fts_weight, sparse_weight)
-        are provided, uses them as-is. Otherwise, defaults to 4:4:2 (0.4:0.4:0.2).
+        Uses weights configured at initialization.If the sparse weight is not provided, it will be set to 0.
         """
         if sparse_results is None:
             sparse_results = []
         
-        # Determine weights: if all three are provided, use them; otherwise use default 4:4:2
-        if (self.vector_weight is not None and self.fts_weight is not None and 
-            self.sparse_weight is not None):
-            # All weights provided, use them directly
-            vector_w = self.vector_weight
-            fts_w = self.fts_weight
-            sparse_w = self.sparse_weight
-        else:
-            # Use default 4:4:2 ratio
-            vector_w = 0.4
-            fts_w = 0.4
-            sparse_w = 0.2
+        vector_w = self.vector_weight if self.vector_weight is not None else 0
+        fts_w = self.fts_weight if self.fts_weight is not None else 0
+        sparse_w = 0
+
+        if self.include_sparse and self.sparse_embedder is not None:
+            sparse_w = self.sparse_weight if self.sparse_weight is not None else 0
         
         # Create mapping of document ID to result data
         all_docs = {}
