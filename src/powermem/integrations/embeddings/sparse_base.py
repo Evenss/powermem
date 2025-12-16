@@ -1,24 +1,24 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from src.powermem.integrations.embeddings.config.sparse_base import SparseEmbedderConfig
+from src.powermem.integrations.embeddings.config.sparse_base import BaseSparseEmbedderConfig
 
 
 class SparseEmbeddingBase(ABC):
     """Initialized a base sparse embedding class
 
     :param config: Sparse embedding configuration option class, defaults to None
-    :type config: Optional[SparseEmbedderConfig], optional
+    :type config: Optional[BaseSparseEmbedderConfig], optional
     """
 
-    def __init__(self, config: Optional[SparseEmbedderConfig] = None):
+    def __init__(self, config: Optional[BaseSparseEmbedderConfig] = None):
         if config is None:
-            self.config = SparseEmbedderConfig()
+            self.config = BaseSparseEmbedderConfig()
         else:
             self.config = config
 
     @abstractmethod
-    def embed_sparse(self, text) -> dict:
+    def embed_sparse(self, text: str) -> dict[int, float]:
         """
         Get the sparse embedding for the given text.
 

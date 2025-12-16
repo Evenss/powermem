@@ -192,6 +192,24 @@ class OceanBaseVectorStore(VectorStoreBase):
         """Configure OceanBase vector index settings automatically."""
         try:
             logger.info("Configuring OceanBase vector index settings...")
+            # Check if it's seekdb
+            if self._is_seekdb():
+                logger.info("seekdb is adaptive mode, no need to configure sparse vector")
+                return
+
+            # Check if it's OceanBase and version >= 4.5.0
+            version_dict = self._get_version_number()
+            if version_dict is None:
+                logger.warning("Could not determine database version, please check the database version")
+                return
+
+            major = version_dict["major"]
+            minor = version_dict["minor"]
+            patch = version_dict["patch"]
+
+            if major >= 4 and minor >= 4 and patch >= 1:
+                logger.info("OceanBase version >= 4.4.1, no need to configure sparse vector")
+                return
 
             # Set vector memory limit percentage
             with self.obvector.engine.connect() as conn:
@@ -1593,12 +1611,12 @@ class OceanBaseVectorStore(VectorStoreBase):
             logger.error(f"An error occurred while checking the sparse vector index: {e}")
             return False
 
-    def _check_sparse_vector_version_support(self) -> bool:
+    def _is_seekdb(self) -> bool:
         """
-        Check if the database version supports sparse vector.
+        Check if the database is seekdb.
 
         Returns:
-            True if version is seekdb or OceanBase >= 4.5.0, False otherwise.
+            True if database is seekdb, False otherwise.
         """
         try:
             with self.obvector.engine.connect() as conn:
@@ -1614,43 +1632,90 @@ class OceanBaseVectorStore(VectorStoreBase):
                         row = result.fetchone()
                         version_str = row[1] if row else ""
                     except Exception:
-                        logger.warning("Could not determine database version, assuming sparse vector not supported")
                         return False
 
                 if not version_str:
-                    logger.warning("Empty version string, assuming sparse vector not supported")
                     return False
 
                 version_str = str(version_str).strip().lower()
+                return "seekdb" in version_str
 
-                # Check if it's seekdb
-                if "seekdb" in version_str:
-                    logger.info("Detected seekdb, sparse vector is supported")
-                    return True
+        except Exception as e:
+            logger.warning(f"Error checking if database is seekdb: {e}")
+            return False
 
-                # Check if it's OceanBase and version >= 4.5.0
-                version_match = re.search(r'[vV](\d+)\.(\d+)\.(\d+)', version_str)
+    def _get_version_number(self) -> Optional[Dict[str, int]]:
+        """
+        Get the database version number.
+
+        Returns:
+            Dictionary with keys "major", "minor", "patch" and int values, e.g., {"major": 4, "minor": 5, "patch": 0}.
+            Returns None if version cannot be determined.
+        """
+        try:
+            with self.obvector.engine.connect() as conn:
+                # Try to get version information
+                # OceanBase uses SELECT VERSION() or SHOW VARIABLES LIKE 'version'
+                try:
+                    result = conn.execute(text("SELECT VERSION()"))
+                    version_str = result.fetchone()[0]
+                except Exception:
+                    # Fallback to SHOW VARIABLES
+                    try:
+                        result = conn.execute(text("SHOW VARIABLES LIKE 'version'"))
+                        row = result.fetchone()
+                        version_str = row[1] if row else ""
+                    except Exception:
+                        return None
+
+                if not version_str:
+                    return None
+
+                version_str = str(version_str).strip()
+                # Parse version string
+                version_match = re.search(r'[vV]?(\d+)\.(\d+)\.(\d+)', version_str)
                 if version_match:
                     major = int(version_match.group(1))
                     minor = int(version_match.group(2))
                     patch = int(version_match.group(3))
-
-                    if major > 4 or (major == 4 and minor >= 5):
-                        logger.info(f"Detected OceanBase version {major}.{minor}.{patch}, sparse vector is supported")
-                        return True
-                    else:
-                        logger.warning(
-                            f"Detected OceanBase version {major}.{minor}.{patch}, "
-                            f"sparse vector requires version >= 4.5.0"
-                        )
-                        return False
+                    return {"major": major, "minor": minor, "patch": patch}
                 else:
-                    logger.warning(
-                        f"Could not parse version string: {version_str}, assuming sparse vector not supported")
-                    return False
+                    return None
 
         except Exception as e:
-            logger.warning(f"Error checking database version: {e}, assuming sparse vector not supported")
+            logger.warning(f"Error getting database version number: {e}")
+            return None
+
+    def _check_sparse_vector_version_support(self) -> bool:
+        """
+        Check if the database version supports sparse vector.
+
+        Returns:
+            True if version is seekdb or OceanBase >= 4.5.0, False otherwise.
+        """
+        # Check if it's seekdb
+        if self._is_seekdb():
+            logger.info("Detected seekdb, sparse vector is supported")
+            return True
+
+        # Check if it's OceanBase and version >= 4.5.0
+        version_dict = self._get_version_number()
+        if version_dict is None:
+            logger.warning("Could not determine database version, assuming sparse vector not supported")
+            return False
+
+        major = version_dict["major"]
+        minor = version_dict["minor"]
+        patch = version_dict["patch"]
+
+        if major > 4 or (major == 4 and minor >= 5):
+            logger.info(f"Detected OceanBase version {major}.{minor}.{patch}, sparse vector is supported")
+            return True
+        else:
+            logger.warning(
+                f"Detected OceanBase version {major}.{minor}.{patch}, "
+                f"sparse vector requires version >= 4.5.0"
+            )
             return False
 
     def _create_sparse_vector_column_and_index(self):

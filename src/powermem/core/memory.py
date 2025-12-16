@@ -14,7 +14,7 @@ from copy import deepcopy
 
 from .base import MemoryBase
 from ..configs import MemoryConfig
-from ..integrations.embeddings.config.sparse_base import SparseEmbedderConfig
+from ..integrations.embeddings.config.sparse_base import BaseSparseEmbedderConfig, SparseEmbedderConfig
 from ..storage.factory import VectorStoreFactory, GraphStoreFactory
 from ..storage.adapter import StorageAdapter, SubStorageAdapter
 from ..intelligence.manager import IntelligenceManager
@@ -247,19 +247,23 @@ class Memory(MemoryBase):
             
             if sparse_config_obj:
                 try:
-                    # Handle SparseEmbedderConfig object or dict format
-                    if hasattr(sparse_config_obj, 'model') or hasattr(sparse_config_obj, 'api_key'):
-                        # It's a SparseEmbedderConfig object
-                        sparse_embedder_config = sparse_config_obj
+                    # Handle SparseEmbedderConfig (BaseModel with provider and config) or dict format
+                    if hasattr(sparse_config_obj, 'provider') and hasattr(sparse_config_obj, 'config'):
+                        # It's a SparseEmbedderConfig (BaseModel) object
+                        sparse_embedder_provider = sparse_config_obj.provider
+                        config_dict = sparse_config_obj.config or {}
                     elif isinstance(sparse_config_obj, dict):
+                        # It's a dict with provider and config keys
                         sparse_embedder_provider = sparse_config_obj.get('provider')
                         config_dict = sparse_config_obj.get('config', {})
-                        sparse_embedder_config = SparseEmbedderConfig(**config_dict)
                     else:
-                        sparse_embedder_config = None
+                        logger.warning(f"Unknown sparse_embedder config format: {type(sparse_config_obj)}. Expected SparseEmbedderConfig or dict with 'provider' and 'config' keys.")
+                        sparse_embedder_provider = None
+                        config_dict = {}
                     
-                    self.sparse_embedder = SparseEmbedderFactory.create(sparse_embedder_provider, sparse_embedder_config)
-                    logger.info(f"Sparse embedder initialized: {sparse_embedder_provider}")
+                    if sparse_embedder_provider:
+                        self.sparse_embedder = SparseEmbedderFactory.create(sparse_embedder_provider, config_dict)
+                        logger.info(f"Sparse embedder initialized: {sparse_embedder_provider}")
                 except Exception as e:
                     logger.warning(f"Failed to initialize sparse embedder: {e}")
         

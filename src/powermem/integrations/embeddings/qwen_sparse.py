@@ -1,7 +1,7 @@
 import os
 from typing import Literal, Optional
 
-from src.powermem.integrations.embeddings.config.sparse_base import SparseEmbedderConfig
+from src.powermem.integrations.embeddings.config.sparse_base import BaseSparseEmbedderConfig
 from src.powermem.integrations.embeddings.sparse_base import SparseEmbeddingBase
 
 try:
@@ -14,7 +14,7 @@ import dashscope
 
 
 class QwenSparseEmbedding(SparseEmbeddingBase):
-    def __init__(self, config: Optional[SparseEmbedderConfig] = None):
+    def __init__(self, config: Optional[BaseSparseEmbedderConfig] = None):
         super().__init__(config)
 
         # Set default model and dimensions
@@ -45,7 +45,7 @@ class QwenSparseEmbedding(SparseEmbeddingBase):
         if base_url:
             os.environ["DASHSCOPE_BASE_URL"] = base_url
 
-    def embed_sparse(self, text: str, memory_action: Optional[Literal["add", "search", "update"]] = None):
+    def embed_sparse(self, text: str, memory_action: Optional[Literal["add", "search", "update"]] = None) -> dict[int, float]:
         """
         Get the embedding for the given text using Qwen.
 
