@@ -633,12 +633,13 @@ class OceanBaseVectorStore(VectorStoreBase):
         # Add hybrid search fields if enabled
         if self.include_sparse and "sparse_embedding" in payload:
             sparse_embedding = payload["sparse_embedding"]
-            # Convert dict to string format for SPARSEVECTOR type,like '{3:0.3, 4:0.4}'
+            # pyobvector's SparseVector type expects a dict format, not a string
+            # SQLAlchemy's type processor will handle the conversion to database format
             if isinstance(sparse_embedding, dict):
-                sparse_vector_str = self._format_sparse_vector(sparse_embedding)
-                record[self.sparse_vector_field] = sparse_vector_str
-            else:
                 record[self.sparse_vector_field] = sparse_embedding
+            else:
+                # If it's not a dict, try to convert or raise an error
+                raise ValueError(f"Sparse embedding must be a dict, got {type(sparse_embedding)}")
 
         # Always add full-text content (enabled by default)
         fulltext_content = payload.get("fulltext_content") or payload.get("data", "")
