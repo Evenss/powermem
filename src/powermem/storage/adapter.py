@@ -34,6 +34,26 @@ class StorageAdapter:
         # Ensure collection exists (will be created with actual vector size when first vector is added)
         # self.vector_store.create_col(self.collection_name, vector_size=1536, distance="cosine")
     
+    def _generate_sparse_embedding(self, content: str, memory_action: str) -> Optional[Any]:
+        """
+        Generate sparse embedding for given content.
+        
+        Args:
+            content: The text content to generate embedding for
+            memory_action: The action context ("add", "search", "update")
+        
+        Returns:
+            Sparse embedding if successful, None otherwise
+        """
+        if not self.sparse_embedder_service or not content:
+            return None
+        
+        try:
+            return self.sparse_embedder_service.embed_sparse(content, memory_action=memory_action)
+        except Exception as e:
+            logger.warning(f"Failed to generate sparse embedding ({memory_action}): {e}")
+            return None
+    
     def add_memory(self, memory_data: Dict[str, Any]) -> int:
         """Add a memory to the store."""
         # ID will be generated using Snowflake algorithm before insertion
@@ -62,11 +82,8 @@ class StorageAdapter:
 
         # Generate sparse embedding if sparse embedder service is available
         sparse_embedding = memory_data.get("sparse_embedding")
-        if sparse_embedding is None and self.sparse_embedder_service and content:
-            try:
-                sparse_embedding = self.sparse_embedder_service.embed_sparse(content, memory_action="add")
-            except Exception as e:
-                logger.warning(f"Failed to generate sparse embedding: {e}")
+        if sparse_embedding is None:
+            sparse_embedding = self._generate_sparse_embedding(content, "add")
 
         # Create collection with actual vector size if not exists
         collection_name = getattr(target_store, 'collection_name', self.collection_name)
@@ -130,12 +147,7 @@ class StorageAdapter:
             return []
         
         # Generate sparse embedding if sparse embedder service is available and query is provided
-        sparse_embedding = None
-        if self.sparse_embedder_service and query:
-            try:
-                sparse_embedding = self.sparse_embedder_service.embed_sparse(query, memory_action="search")
-            except Exception as e:
-                logger.warning(f"Failed to generate sparse embedding: {e}")
+        sparse_embedding = self._generate_sparse_embedding(query, "search") if query else None
         
         # Merge user_id/agent_id/run_id into filters to ensure consistency
         # This ensures filters are applied at the database level, avoiding redundant filtering
@@ -364,12 +376,9 @@ class StorageAdapter:
             updated_payload["fulltext_content"] = update_data["content"]
             
             # Generate sparse embedding if sparse embedder service is available and content is updated
-            if self.sparse_embedder_service and update_data["content"]:
-                try:
-                    sparse_embedding = self.sparse_embedder_service.embed_sparse(update_data["content"], memory_action="update")
-                    updated_payload["sparse_embedding"] = sparse_embedding
-                except Exception as e:
-                    logger.warning(f"Failed to generate sparse embedding during update: {e}")
+            sparse_embedding = self._generate_sparse_embedding(update_data["content"], "update")
+            if sparse_embedding is not None:
+                updated_payload["sparse_embedding"] = sparse_embedding
             
             # Remove content from update_data to avoid confusion
             update_data = update_data.copy()
