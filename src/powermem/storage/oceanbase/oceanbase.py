@@ -552,9 +552,6 @@ class OceanBaseVectorStore(VectorStoreBase):
     def _get_standard_select_columns(self) -> List:
         """
         Get the standard column list for SELECT queries.
-        
-        Returns:
-            List of SQLAlchemy column elements for standard fields.
         """
         columns = [
             self.table.c[self.text_field],
@@ -579,13 +576,6 @@ class OceanBaseVectorStore(VectorStoreBase):
     def _get_standard_column_names(self, include_vector_field: bool = False) -> List[str]:
         """
         Get the standard column name list for obvector output_column_names parameter.
-        
-        Args:
-            include_vector_field: If True, include vector_field in the column list.
-                                  Used for get/list operations. Default is False.
-        
-        Returns:
-            List of column name strings for standard fields.
         """
         column_names = [
             self.text_field,
@@ -637,22 +627,52 @@ class OceanBaseVectorStore(VectorStoreBase):
 
         return metadata
 
-    def _build_metadata_with_sparse_embedding(self, user_id: str, agent_id: str, run_id: str,
-                                              actor_id: str, hash_val: str, created_at: str,
-                                              updated_at: str, category: str, metadata_json: str,
-                                              sparse_embedding: Any = None) -> Dict:
+    def _parse_row_to_dict(self, row, include_vector: bool = False, extract_score: bool = True) -> Dict:
         """
-        Build standard metadata dictionary with optional sparse_embedding support.
-        This is the common logic shared by all parse methods.
+        Parse a database row and return all fields as a dictionary.
+        This unified method replaces the previous three separate methods.
         
         Args:
-            user_id, agent_id, run_id, actor_id, hash_val, created_at, updated_at, category, metadata_json:
-                Standard fields for building metadata
-            sparse_embedding: Optional sparse embedding value to add to metadata
+            row: Database row result
+            include_vector: Whether the row includes vector field (for get/list methods)
+            extract_score: Whether to extract score/distance field (for search methods)
         
         Returns:
-            Dict: Built metadata dictionary with sparse_embedding if provided
+            Dict containing all parsed fields:
+            - text_content: Text content from the row
+            - metadata_json: Raw metadata JSON string
+            - vector_id: Vector ID
+            - vector: Vector data (only if include_vector=True)
+            - user_id, agent_id, run_id, actor_id, hash_val: Standard fields
+            - created_at, updated_at, category: Timestamp and category fields
+            - metadata: Built metadata dictionary with sparse_embedding if available
+            - score_or_distance: Score or distance value (only if extract_score=True)
         """
+        parsed = self._parse_row(row)
+        
+        if include_vector:
+            # For get/list methods: vector_id, vector, text_content, metadata_json, ...
+            (vector_id, vector, text_content, metadata_json, user_id, agent_id, run_id,
+             actor_id, hash_val, created_at, updated_at, category) = parsed[:12]
+            
+            # Extract sparse_embedding if enabled
+            sparse_embedding = parsed[12] if self.include_sparse else None
+            score_or_distance = None
+        else:
+            # For search methods: text_content, metadata_json, vector_id, ...
+            (text_content, metadata_json, vector_id, user_id, agent_id, run_id,
+             actor_id, hash_val, created_at, updated_at, category) = parsed[:11]
+            
+            vector = None
+            
+            # Extract sparse_embedding and score/distance based on include_sparse flag
+            if self.include_sparse:
+                sparse_embedding = parsed[11]
+                score_or_distance = parsed[12] if extract_score else None
+            else:
+                sparse_embedding = None
+                score_or_distance = parsed[11] if extract_score else None
+        
         # Build standard metadata
         metadata = self._build_standard_metadata(
             user_id, agent_id, run_id, actor_id, hash_val,
@@ -663,72 +683,30 @@ class OceanBaseVectorStore(VectorStoreBase):
         if sparse_embedding is not None:
             metadata["sparse_embedding"] = sparse_embedding
         
-        return metadata
-
-    def _parse_row_and_build_metadata(self, row, extract_score: bool = True) -> tuple:
-        """
-        Parse a database row and build metadata with sparse_embedding support.
-        Used for standard search methods where fields are: text_content, metadata_json, vector_id, etc.
+        # Build result dictionary
+        result = {
+            "text_content": text_content,
+            "metadata_json": metadata_json,
+            "vector_id": vector_id,
+            "user_id": user_id,
+            "agent_id": agent_id,
+            "run_id": run_id,
+            "actor_id": actor_id,
+            "hash_val": hash_val,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "category": category,
+            "metadata": metadata,
+        }
         
-        Args:
-            row: Database row result
-            extract_score: Whether to extract score/distance field (last field after sparse_embedding if enabled)
+        # Add optional fields
+        if include_vector:
+            result["vector"] = vector
         
-        Returns:
-            tuple: (text_content, metadata_json, vector_id, user_id, agent_id, run_id,
-                   actor_id, hash_val, created_at, updated_at, category, metadata, score_or_distance)
-        """
-        parsed = self._parse_row(row)
+        if extract_score:
+            result["score_or_distance"] = score_or_distance
         
-        # Extract common fields (first 11 fields are always the same)
-        (text_content, metadata_json, vector_id, user_id, agent_id, run_id,
-         actor_id, hash_val, created_at, updated_at, category) = parsed[:11]
-        
-        # Extract sparse_embedding and score/distance based on include_sparse flag
-        if self.include_sparse:
-            sparse_embedding = parsed[11]
-            score_or_distance = parsed[12] if extract_score else None
-        else:
-            sparse_embedding = None
-            score_or_distance = parsed[11] if extract_score else None
-        
-        # Build metadata using common method
-        metadata = self._build_metadata_with_sparse_embedding(
-            user_id, agent_id, run_id, actor_id, hash_val,
-            created_at, updated_at, category, metadata_json, sparse_embedding
-        )
-        
-        return (text_content, metadata_json, vector_id, user_id, agent_id, run_id,
-                actor_id, hash_val, created_at, updated_at, category, metadata, score_or_distance)
-
-    def _parse_row_and_build_metadata_with_vector(self, row) -> tuple:
-        """
-        Parse a database row where vector_id and vector are the first two fields.
-        Used in both get and list methods.
-        
-        Args:
-            row: Database row result
-        
-        Returns:
-            tuple: (vector_id, vector, text_content, metadata_json, user_id, agent_id, run_id,
-                   actor_id, hash_val, created_at, updated_at, category, metadata)
-        """
-        parsed = self._parse_row(row)
-        
-        (vector_id, vector, text_content, metadata_json, user_id, agent_id, run_id,
-         actor_id, hash_val, created_at, updated_at, category) = parsed[:12]
-        
-        # Extract sparse_embedding if enabled
-        sparse_embedding = parsed[12] if self.include_sparse else None
-        
-        # Build metadata using common method
-        metadata = self._build_metadata_with_sparse_embedding(
-            user_id, agent_id, run_id, actor_id, hash_val,
-            created_at, updated_at, category, metadata_json, sparse_embedding
-        )
-        
-        return (vector_id, vector, text_content, metadata_json, user_id, agent_id, run_id,
-                actor_id, hash_val, created_at, updated_at, category, metadata)
+        return result
 
     def _create_output_data(self, vector_id: int, text_content: str, score: float,
                             metadata: Dict) -> OutputData:
@@ -835,12 +813,15 @@ class OceanBaseVectorStore(VectorStoreBase):
             # Convert results to OutputData objects
             search_results = []
             for row in results.fetchall():
-                (text_content, metadata_json, vector_id, user_id, agent_id, run_id,
-                 actor_id, hash_val, created_at, updated_at, category, metadata, distance) = \
-                    self._parse_row_and_build_metadata(row, extract_score=True)
-
+                parsed = self._parse_row_to_dict(row, include_vector=False, extract_score=True)
+                
                 # Convert distance to score based on metric type
                 # Handle None distance (shouldn't happen but be defensive)
+                distance = parsed["score_or_distance"]
+                vector_id = parsed["vector_id"]
+                text_content = parsed["text_content"]
+                metadata = parsed["metadata"]
+                
                 if distance is None:
                     logger.warning(f"Distance is None for vector_id {vector_id}, using default score 0.0")
                     score = 0.0
@@ -957,12 +938,15 @@ class OceanBaseVectorStore(VectorStoreBase):
         # Convert results to OutputData objects
         fts_results = []
         for row in rows:
-            (text_content, metadata_json, vector_id, user_id, agent_id, run_id,
-             actor_id, hash_val, created_at, updated_at, category, metadata, fts_score) = \
-                self._parse_row_and_build_metadata(row, extract_score=True)
-
+            parsed = self._parse_row_to_dict(row, include_vector=False, extract_score=True)
+            
             # Use the actual FTS score from the query
-            fts_results.append(self._create_output_data(vector_id, text_content, float(fts_score), metadata))
+            fts_results.append(self._create_output_data(
+                parsed["vector_id"], 
+                parsed["text_content"], 
+                float(parsed["score_or_distance"]), 
+                parsed["metadata"]
+            ))
 
         logger.info(f"_fulltext_search results, len : {len(fts_results)}, fts_results : {fts_results}")
         return fts_results
@@ -1030,15 +1014,19 @@ class OceanBaseVectorStore(VectorStoreBase):
             # Convert results to OutputData objects
             sparse_results = []
             for row in rows:
-                (text_content, metadata_json, vector_id, user_id, agent_id, run_id,
-                 actor_id, hash_val, created_at, updated_at, category, metadata, sparse_score) = \
-                    self._parse_row_and_build_metadata(row, extract_score=True)
-
+                parsed = self._parse_row_to_dict(row, include_vector=False, extract_score=True)
+                
                 # Convert negative_inner_product to score (negate to make higher = better)
                 # negative_inner_product returns negative values, so we negate to get positive scores
+                sparse_score = parsed["score_or_distance"]
                 score = -float(sparse_score) if sparse_score is not None else 0.0
                 
-                sparse_results.append(self._create_output_data(vector_id, text_content, score, metadata))
+                sparse_results.append(self._create_output_data(
+                    parsed["vector_id"], 
+                    parsed["text_content"], 
+                    score, 
+                    parsed["metadata"]
+                ))
             
             logger.debug(f"_sparse_search results, len : {len(sparse_results)}")
             return sparse_results
@@ -1438,12 +1426,15 @@ class OceanBaseVectorStore(VectorStoreBase):
                 logger.debug(f"Vector with ID {vector_id} not found in collection '{self.collection_name}'")
                 return None
 
-            (vector_id_from_db, vector, text_content, metadata_json, user_id, agent_id,
-             run_id, actor_id, hash_val, created_at, updated_at, category, metadata) = \
-                self._parse_row_and_build_metadata_with_vector(rows[0])
+            parsed = self._parse_row_to_dict(rows[0], include_vector=True, extract_score=False)
 
             logger.debug(f"Successfully retrieved vector with ID: {vector_id} from collection '{self.collection_name}'")
-            return self._create_output_data(vector_id, text_content, 0.0, metadata)
+            return self._create_output_data(
+                parsed["vector_id"], 
+                parsed["text_content"], 
+                0.0, 
+                parsed["metadata"]
+            )
             
         except Exception as e:
             logger.error(f"Failed to get vector with ID {vector_id} from collection '{self.collection_name}': {e}", exc_info=True)
@@ -1541,11 +1532,14 @@ class OceanBaseVectorStore(VectorStoreBase):
 
             memories = []
             for row in results.fetchall():
-                (vector_id, vector, text_content, metadata_json, user_id, agent_id, run_id,
-                 actor_id, hash_val, created_at, updated_at, category, metadata) = \
-                    self._parse_row_and_build_metadata_with_vector(row)
+                parsed = self._parse_row_to_dict(row, include_vector=True, extract_score=False)
 
-                memories.append(self._create_output_data(vector_id, text_content, 0.0, metadata))
+                memories.append(self._create_output_data(
+                    parsed["vector_id"], 
+                    parsed["text_content"], 
+                    0.0, 
+                    parsed["metadata"]
+                ))
 
             if limit:
                 memories = memories[:limit]
