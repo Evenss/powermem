@@ -664,37 +664,8 @@ class OceanBaseVectorStore(VectorStoreBase):
 
     def _parse_row_and_build_metadata_with_vector(self, row) -> tuple:
         """
-        Parse a database row where vector is the first field (used in get method).
-        
-        Args:
-            row: Database row result
-        
-        Returns:
-            tuple: (vector, text_content, metadata_json, user_id, agent_id, run_id,
-                   actor_id, hash_val, created_at, updated_at, category, metadata)
-        """
-        parsed = self._parse_row(row)
-        
-        # Extract fields: vector, text_content, metadata_json, user_id, agent_id, run_id,
-        # actor_id, hash_val, created_at, updated_at, category
-        (vector, text_content, metadata_json, user_id, agent_id,
-         run_id, actor_id, hash_val, created_at, updated_at, category) = parsed[:11]
-        
-        # Extract sparse_embedding if enabled
-        sparse_embedding = parsed[11] if self.include_sparse else None
-        
-        # Build metadata using common method
-        metadata = self._build_metadata_with_sparse_embedding(
-            user_id, agent_id, run_id, actor_id, hash_val,
-            created_at, updated_at, category, metadata_json, sparse_embedding
-        )
-        
-        return (vector, text_content, metadata_json, user_id, agent_id, run_id,
-                actor_id, hash_val, created_at, updated_at, category, metadata)
-
-    def _parse_row_and_build_metadata_for_list(self, row) -> tuple:
-        """
-        Parse a database row for list method (vector_id and vector are first two fields).
+        Parse a database row where vector_id and vector are the first two fields.
+        Used in both get and list methods.
         
         Args:
             row: Database row result
@@ -705,8 +676,6 @@ class OceanBaseVectorStore(VectorStoreBase):
         """
         parsed = self._parse_row(row)
         
-        # Extract fields: vector_id, vector, text_content, metadata_json, user_id, agent_id, run_id,
-        # actor_id, hash_val, created_at, updated_at, category
         (vector_id, vector, text_content, metadata_json, user_id, agent_id, run_id,
          actor_id, hash_val, created_at, updated_at, category) = parsed[:12]
         
@@ -1451,6 +1420,7 @@ class OceanBaseVectorStore(VectorStoreBase):
         try:
             # Build output column name list
             output_columns = [
+                self.primary_field,
                 self.vector_field,
                 self.text_field,
                 self.metadata_field,
@@ -1479,7 +1449,7 @@ class OceanBaseVectorStore(VectorStoreBase):
                 logger.debug(f"Vector with ID {vector_id} not found in collection '{self.collection_name}'")
                 return None
 
-            (vector, text_content, metadata_json, user_id, agent_id,
+            (vector_id_from_db, vector, text_content, metadata_json, user_id, agent_id,
              run_id, actor_id, hash_val, created_at, updated_at, category, metadata) = \
                 self._parse_row_and_build_metadata_with_vector(rows[0])
 
@@ -1601,7 +1571,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             for row in results.fetchall():
                 (vector_id, vector, text_content, metadata_json, user_id, agent_id, run_id,
                  actor_id, hash_val, created_at, updated_at, category, metadata) = \
-                    self._parse_row_and_build_metadata_for_list(row)
+                    self._parse_row_and_build_metadata_with_vector(row)
 
                 memories.append(self._create_output_data(vector_id, text_content, 0.0, metadata))
 
