@@ -575,6 +575,44 @@ class OceanBaseVectorStore(VectorStoreBase):
         
         return columns
 
+    def _get_standard_column_names(self, include_vector_field: bool = False) -> List[str]:
+        """
+        Get the standard column name list for obvector output_column_names parameter.
+        
+        Args:
+            include_vector_field: If True, include vector_field in the column list.
+                                  Used for get/list operations. Default is False.
+        
+        Returns:
+            List of column name strings for standard fields.
+        """
+        column_names = [
+            self.text_field,
+        ]
+        
+        # Include vector_field if requested
+        if include_vector_field:
+            column_names.append(self.vector_field)
+        
+        column_names.extend([
+            self.metadata_field,
+            self.primary_field,
+            "user_id",
+            "agent_id",
+            "run_id",
+            "actor_id",
+            "hash",
+            "created_at",
+            "updated_at",
+            "category",
+        ])
+        
+        # Only include sparse_embedding if sparse search is enabled
+        if self.include_sparse:
+            column_names.append(self.sparse_vector_field)
+        
+        return column_names
+
     def _build_standard_metadata(self, user_id: str, agent_id: str, run_id: str,
                                  actor_id: str, hash_val: str, created_at: str,
                                  updated_at: str, category: str, metadata_json: str) -> Dict:
@@ -733,11 +771,9 @@ class OceanBaseVectorStore(VectorStoreBase):
         if self.include_sparse and "sparse_embedding" in payload:
             sparse_embedding = payload["sparse_embedding"]
             # pyobvector's SparseVector type expects a dict format, not a string
-            # SQLAlchemy's type processor will handle the conversion to database format
             if isinstance(sparse_embedding, dict):
                 record[self.sparse_vector_field] = sparse_embedding
             else:
-                # If it's not a dict, try to convert or raise an error
                 raise ValueError(f"Sparse embedding must be a dict, got {type(sparse_embedding)}")
 
         # Always add full-text content (enabled by default)
@@ -781,23 +817,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             where_clause = self._generate_where_clause(filters)
 
             # Build output column names list
-            output_columns = [
-                self.text_field,
-                self.metadata_field,
-                self.primary_field,
-                "user_id",
-                "agent_id",
-                "run_id",
-                "actor_id",
-                "hash",
-                "created_at",
-                "updated_at",
-                "category",
-            ]
-            
-            # Only include sparse_embedding if sparse search is enabled
-            if self.include_sparse:
-                output_columns.append(self.sparse_vector_field)
+            output_columns = self._get_standard_column_names()
             
             # Perform vector search - pyobvector expects a single vector, not a list of vectors
             results = self.obvector.ann_search(
@@ -1419,24 +1439,7 @@ class OceanBaseVectorStore(VectorStoreBase):
         """Retrieve a vector by ID."""
         try:
             # Build output column name list
-            output_columns = [
-                self.primary_field,
-                self.vector_field,
-                self.text_field,
-                self.metadata_field,
-                "user_id",
-                "agent_id",
-                "run_id",
-                "actor_id",
-                "hash",
-                "created_at",
-                "updated_at",
-                "category",
-            ]
-            
-            # Only include sparse_embedding if sparse search is enabled
-            if self.include_sparse:
-                output_columns.append(self.sparse_vector_field)
+            output_columns = self._get_standard_column_names(include_vector_field=True)
             
             results = self.obvector.get(
                 table_name=self.collection_name,
@@ -1540,24 +1543,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             where_clause = self._generate_where_clause(filters)
 
             # Build output column name list
-            output_columns = [
-                self.primary_field,
-                self.vector_field,
-                self.text_field,
-                self.metadata_field,
-                "user_id",
-                "agent_id",
-                "run_id",
-                "actor_id",
-                "hash",
-                "created_at",
-                "updated_at",
-                "category",
-            ]
-            
-            # Only include sparse_embedding if sparse search is enabled
-            if self.include_sparse:
-                output_columns.append(self.sparse_vector_field)
+            output_columns = self._get_standard_column_names(include_vector_field=True)
 
             # Get all records
             results = self.obvector.get(
