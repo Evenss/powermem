@@ -55,6 +55,9 @@ In AI application development, enabling large language models to persistently "r
 - 🔍 **[Intelligent Memory Extraction](docs/examples/scenario_2_intelligent_memory.md)**: Automatically extracts key facts from conversations through LLM, intelligently detects duplicates, updates conflicting information, and merges related memories to ensure accuracy and consistency of the memory database
 - 📉 **[Ebbinghaus Forgetting Curve](docs/examples/scenario_8_ebbinghaus_forgetting_curve.md)**: Based on the memory forgetting patterns from cognitive science, automatically calculates memory retention rates and implements time-decay weighting, prioritizing recent and relevant memories, allowing AI systems to naturally "forget" outdated information like humans
 
+### 👤 User Profile Support
+- 🎭 **[User Profile](docs/examples/scenario_9_user_profile.md)**: Automatically builds and updates user profiles based on historical conversations and behavioral data, applicable to scenarios such as personalized recommendations and AI companionship, enabling AI systems to better understand and serve each user
+
 ### 🤖 Multi-Agent Support
 - 🔐 **[Agent Shared/Isolated Memory](docs/examples/scenario_3_multi_agent.md)**: Provides independent memory spaces for each agent, supports cross-agent memory sharing and collaboration, and enables flexible permission management through scope control
 
@@ -112,6 +115,13 @@ For more detailed examples and usage patterns, see the [Getting Started Guide](d
 - 🏗️ **[Architecture Guide](docs/architecture/overview.md)**: System architecture and design
 - 📓 **[Examples](docs/examples/overview.md)**: Interactive Jupyter notebooks and use cases
 - 👨‍💻 **[Development Documentation](docs/development/overview.md)**: Developer documentation
+
+## ⭐ Highlights Release Notes
+
+| Version | Iteration Period | Release Date | Function |
+|---------|--------|-------|---------|
+| 0.2.0 | 2025.12 | 2025.12.16 | <ul><li>Advanced user profile management, supporting "personalized experience" for AI applications</li><li>Expanded multimodal support, including text, image, and audio memory</li></ul> |
+| 0.1.0 | 2025.11 | 2025.11.14 | <ul><li>Core memory management functionality, supporting persistent storage of memories</li><li>Hybrid retrieval supporting vector, full-text, and graph search</li><li>Intelligent memory extraction based on LLM fact extraction</li><li>Full lifecycle memory management supporting Ebbinghaus forgetting curve</li><li>Multi-Agent memory management support</li><li>Multiple storage backend support (OceanBase, PostgreSQL, SQLite)</li><li>Support for knowledge graph retrieval through multi-hop graph search</li></ul> |
 
 ## 💬 Support
 

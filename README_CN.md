@@ -56,6 +56,9 @@
 - 🔍 **[记忆的智能提取](docs/examples/scenario_2_intelligent_memory.md)**：通过 LLM 自动从对话中提取关键事实，智能检测重复、更新冲突信息并合并相关记忆，确保记忆库的准确性和一致性
 - 📉 **[艾宾浩斯遗忘曲线](docs/examples/scenario_8_ebbinghaus_forgetting_curve.md)**：基于认知科学的记忆遗忘规律，自动计算记忆保留率并实现时间衰减加权，优先返回最近且相关的记忆，让 AI 系统像人类一样自然"遗忘"过时信息
 
+### 👤 用户画像支持
+- 🎭 **[用户画像](docs/examples/scenario_9_user_profile.md)**：基于用户历史对话和行为数据，自动构建和更新用户画像，适用于个性化推荐、AI 陪伴等场景，让 AI 系统更好地理解和服务每个用户
+
 ### 🤖 多智能体支持
 - 🔐 **[智能体共享/隔离记忆](docs/examples/scenario_3_multi_agent.md)**：为每个智能体提供独立的记忆空间，支持跨智能体记忆共享和协作，通过作用域控制实现灵活的权限管理
 
@@ -113,6 +116,13 @@ for result in results.get('results', []):
 - 🏗️ **[架构指南](docs/architecture/overview.md)**：系统架构和设计
 - 📓 **[示例](docs/examples/overview.md)**：交互式 Jupyter 笔记本和使用案例
 - 👨‍💻 **[开发者文档](docs/development/overview.md)**：开发者文档
+
+## ⭐ 重点发布说明
+
+| Version | Iteration Period | Release Date | Function |
+|---------|--------|-------|---------|
+| 0.2.0 | 2025.12 | 2025.12.16 | <ul><li>高级用户画像管理，支持 AI 应用的“千人千面”</li><li>扩展多模态支持，包括文本、图像和音频记忆</li></ul> |
+| 0.1.0 | 2025.11 | 2025.11.14 | <ul><li>核心记忆管理功能，支持持久化存储记忆</li><li>支持向量、全文和图的混合检索</li><li>基于 LLM 的事实提取智能记忆</li><li>支持基于艾宾浩斯遗忘曲线的全生命周期记忆管理</li><li>支持 Multi-Agent 记忆管理</li><li>多存储后端支持（OceanBase、PostgreSQL、SQLite）</li><li>支持通过多跳图检索的方式处理知识图谱的检索</li></ul> |
 
 ## 💬 支持
 
