@@ -651,8 +651,7 @@ class OceanBaseVectorStore(VectorStoreBase):
         parsed = self._parse_row(row)
         
         if include_vector:
-            # For get/list methods: vector_id, vector, text_content, metadata_json, ...
-            (vector_id, vector, text_content, metadata_json, user_id, agent_id, run_id,
+            (text_content, vector, metadata_json, vector_id, user_id, agent_id, run_id,
              actor_id, hash_val, created_at, updated_at, category) = parsed[:12]
             
             # Extract sparse_embedding if enabled
