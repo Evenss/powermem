@@ -825,3 +825,19 @@ def generate_snowflake_id() -> int:
         64-bit integer ID
     """
     return get_snowflake_generator().generate()
+
+
+def format_sparse_vector(sparse_dict: Dict[int, float]) -> str:
+    """
+    Format sparse vector dictionary to string format for SQL query.
+    
+    Args:
+        sparse_dict: Dictionary with token_id as key and weight as value, e.g., {3: 0.3, 4: 0.4}
+        
+    Returns:
+        Formatted string like '{3:0.3, 4:0.4}'
+    """
+    if not sparse_dict:
+        return "{}"
+    formatted = "{" + ", ".join(f"{k}:{v}" for k, v in sparse_dict.items()) + "}"
+    return formatted

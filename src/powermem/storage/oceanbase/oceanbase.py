@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from powermem.storage.base import VectorStoreBase, OutputData
-from powermem.utils.utils import serialize_datetime, generate_snowflake_id
+from powermem.utils.utils import serialize_datetime, generate_snowflake_id, format_sparse_vector
 
 try:
     from pyobvector import (
@@ -966,21 +966,6 @@ class OceanBaseVectorStore(VectorStoreBase):
         logger.info(f"_fulltext_search results, len : {len(fts_results)}, fts_results : {fts_results}")
         return fts_results
 
-    def _format_sparse_vector(self, sparse_dict: Dict[int, float]) -> str:
-        """
-        Format sparse vector dictionary to string format for SQL query.
-        
-        Args:
-            sparse_dict: Dictionary with token_id as key and weight as value, e.g., {3: 0.3, 4: 0.4}
-            
-        Returns:
-            Formatted string like '{3:0.3, 4:0.4}'
-        """
-        if not sparse_dict:
-            return "{}"
-        formatted = "{" + ", ".join(f"{k}:{v}" for k, v in sparse_dict.items()) + "}"
-        return formatted
-
     def _sparse_search(self, sparse_embedding: Dict[int, float], limit: int = 5, filters: Optional[Dict] = None) -> list[OutputData]:
         """
         Perform sparse vector search using OceanBase SPARSEVECTOR.
@@ -1006,7 +991,7 @@ class OceanBaseVectorStore(VectorStoreBase):
         try:
             
             # Format sparse vector for SQL query
-            sparse_vector_str = self._format_sparse_vector(sparse_embedding)
+            sparse_vector_str = format_sparse_vector(sparse_embedding)
             
             # Generate where clause from filters
             filter_where_clause = self._generate_where_clause(filters)
