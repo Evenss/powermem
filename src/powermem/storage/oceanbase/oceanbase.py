@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from powermem.storage.base import VectorStoreBase, OutputData
-from powermem.utils.utils import serialize_datetime, generate_snowflake_id, format_sparse_vector
+from powermem.utils.utils import serialize_datetime, generate_snowflake_id
 from powermem.utils.oceanbase_util import OceanBaseUtil
 
 try:
@@ -992,7 +992,7 @@ class OceanBaseVectorStore(VectorStoreBase):
         try:
             
             # Format sparse vector for SQL query
-            sparse_vector_str = format_sparse_vector(sparse_embedding)
+            sparse_vector_str = OceanBaseUtil.format_sparse_vector(sparse_embedding)
             
             # Generate where clause from filters
             filter_where_clause = self._generate_where_clause(filters)
