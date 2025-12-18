@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from powermem.storage.base import VectorStoreBase, OutputData
 from powermem.utils.utils import serialize_datetime, generate_snowflake_id, format_sparse_vector
+from powermem.utils.oceanbase_util import OceanBaseUtil
 
 try:
     from pyobvector import (
@@ -193,12 +194,12 @@ class OceanBaseVectorStore(VectorStoreBase):
         try:
             logger.info("Configuring OceanBase vector index settings...")
             # Check if it's seekdb
-            if self._is_seekdb():
+            if OceanBaseUtil.is_seekdb(self.obvector):
                 logger.info("seekdb is adaptive mode, no need to configure sparse vector")
                 return
 
             # Check if it's OceanBase and version >= 4.5.0
-            version_dict = self._get_version_number()
+            version_dict = OceanBaseUtil.get_version_number(self.obvector)
             if version_dict is None:
                 logger.warning("Could not determine database version, please check the database version")
                 return
@@ -1579,29 +1580,10 @@ class OceanBaseVectorStore(VectorStoreBase):
 
     def _check_and_create_fulltext_index(self):
         # Check whether the full-text index exists, if not, create it
-        if not self._check_fulltext_index_exists():
+        if not OceanBaseUtil.check_fulltext_index_exists(
+            self.obvector, self.collection_name, self.fulltext_field
+        ):
             self._create_fulltext_index()
-
-    def _check_fulltext_index_exists(self) -> bool:
-        """
-        Check if the full-text index of the specified table exists.
-        """
-        try:
-            with self.obvector.engine.connect() as conn:
-                result = conn.execute(text(f"SHOW INDEX FROM {self.collection_name}"))
-                indexes = result.fetchall()
-
-                for index in indexes:
-                    # Index [2] is the index name, index [4] is the column name, and index [10] is the index type
-                    if len(index) > 10 and index[10] == 'FULLTEXT':
-                        if self.fulltext_field in str(index[4]):
-                            return True
-
-            return False
-
-        except Exception as e:
-            logger.error(f"An error occurred while checking the full-text index: {e}")
-            return False
 
     def _create_fulltext_index(self):
         try:
@@ -1633,7 +1615,7 @@ class OceanBaseVectorStore(VectorStoreBase):
     def _check_and_create_sparse_vector_column_and_index(self):
         """Check and create sparse vector column and index if they don't exist."""
         # First check if version supports sparse vector
-        if not self._check_sparse_vector_version_support():
+        if not OceanBaseUtil.check_sparse_vector_version_support(self.obvector):
             logger.warning(
                 "Database version does not support sparse vector. "
                 "Sparse vector requires seekdb or OceanBase >= 4.5.0"
@@ -1641,153 +1623,19 @@ class OceanBaseVectorStore(VectorStoreBase):
             self.include_sparse = False
             return
 
-        if not self._check_sparse_vector_column_exists():
+        if not OceanBaseUtil.check_sparse_vector_column_exists(
+            self.obvector, self.collection_name, self.sparse_vector_field
+        ):
             self._create_sparse_vector_column_and_index()
-        elif not self._check_sparse_vector_index_exists():
+        elif not OceanBaseUtil.check_sparse_vector_index_exists(
+            self.obvector, self.collection_name
+        ):
             self._create_sparse_vector_index()
-    
-    def _check_sparse_vector_column_exists(self) -> bool:
-        """Check if the sparse vector column exists."""
-        try:
-            with self.obvector.engine.connect() as conn:
-                result = conn.execute(text(f"DESCRIBE {self.collection_name}"))
-                columns = result.fetchall()
-                
-                for col in columns:
-                    if col[0] == self.sparse_vector_field:
-                        return True
-                return False
-        except Exception as e:
-            logger.error(f"An error occurred while checking the sparse vector column: {e}")
-            return False
-    
-    def _check_sparse_vector_index_exists(self) -> bool:
-        """Check if the sparse vector index exists."""
-        try:
-            with self.obvector.engine.connect() as conn:
-                result = conn.execute(text(f"SHOW INDEX FROM {self.collection_name}"))
-                indexes = result.fetchall()
-                
-                for index in indexes:
-                    # Index [2] is the index name, index [4] is the column name
-                    if len(index) > 4 and index[2] == "sparse_embedding_idx":
-                        return True
-                return False
-        except Exception as e:
-            logger.error(f"An error occurred while checking the sparse vector index: {e}")
-            return False
-
-    def _is_seekdb(self) -> bool:
-        """
-        Check if the database is seekdb.
-
-        Returns:
-            True if database is seekdb, False otherwise.
-        """
-        try:
-            with self.obvector.engine.connect() as conn:
-                # Try to get version information
-                # OceanBase uses SELECT VERSION() or SHOW VARIABLES LIKE 'version'
-                try:
-                    result = conn.execute(text("SELECT VERSION()"))
-                    version_str = result.fetchone()[0]
-                except Exception:
-                    # Fallback to SHOW VARIABLES
-                    try:
-                        result = conn.execute(text("SHOW VARIABLES LIKE 'version'"))
-                        row = result.fetchone()
-                        version_str = row[1] if row else ""
-                    except Exception:
-                        return False
-
-                if not version_str:
-                    return False
-
-                version_str = str(version_str).strip().lower()
-                return "seekdb" in version_str
-
-        except Exception as e:
-            logger.warning(f"Error checking if database is seekdb: {e}")
-            return False
-
-    def _get_version_number(self) -> Optional[Dict[str, int]]:
-        """
-        Get the database version number.
-
-        Returns:
-            Dictionary with keys "major", "minor", "patch" and int values, e.g., {"major": 4, "minor": 5, "patch": 0}.
-            Returns None if version cannot be determined.
-        """
-        try:
-            with self.obvector.engine.connect() as conn:
-                # Try to get version information
-                # OceanBase uses SELECT VERSION() or SHOW VARIABLES LIKE 'version'
-                try:
-                    result = conn.execute(text("SELECT VERSION()"))
-                    version_str = result.fetchone()[0]
-                except Exception:
-                    # Fallback to SHOW VARIABLES
-                    try:
-                        result = conn.execute(text("SHOW VARIABLES LIKE 'version'"))
-                        row = result.fetchone()
-                        version_str = row[1] if row else ""
-                    except Exception:
-                        return None
-
-                if not version_str:
-                    return None
-
-                version_str = str(version_str).strip()
-                # Parse version string
-                version_match = re.search(r'[vV]?(\d+)\.(\d+)\.(\d+)', version_str)
-                if version_match:
-                    major = int(version_match.group(1))
-                    minor = int(version_match.group(2))
-                    patch = int(version_match.group(3))
-                    return {"major": major, "minor": minor, "patch": patch}
-                else:
-                    return None
-
-        except Exception as e:
-            logger.warning(f"Error getting database version number: {e}")
-            return None
-
-    def _check_sparse_vector_version_support(self) -> bool:
-        """
-        Check if the database version supports sparse vector.
-
-        Returns:
-            True if version is seekdb or OceanBase >= 4.5.0, False otherwise.
-        """
-        # Check if it's seekdb
-        if self._is_seekdb():
-            logger.info("Detected seekdb, sparse vector is supported")
-            return True
-
-        # Check if it's OceanBase and version >= 4.5.0
-        version_dict = self._get_version_number()
-        if version_dict is None:
-            logger.warning("Could not determine database version, assuming sparse vector not supported")
-            return False
-
-        major = version_dict["major"]
-        minor = version_dict["minor"]
-        patch = version_dict["patch"]
-
-        if major > 4 or (major == 4 and minor >= 5):
-            logger.info(f"Detected OceanBase version {major}.{minor}.{patch}, sparse vector is supported")
-            return True
-        else:
-            logger.warning(
-                f"Detected OceanBase version {major}.{minor}.{patch}, "
-                f"sparse vector requires version >= 4.5.0"
-            )
-            return False
 
     def _create_sparse_vector_column_and_index(self):
         """Create sparse vector column and index."""
         # First check if version supports sparse vector
-        if not self._check_sparse_vector_version_support():
+        if not OceanBaseUtil.check_sparse_vector_version_support(self.obvector):
             logger.warning(
                 "Database version does not support sparse vector. "
                 "Sparse vector requires seekdb or OceanBase >= 4.5.0"
@@ -1803,7 +1651,9 @@ class OceanBaseVectorStore(VectorStoreBase):
             
             with self.obvector.engine.connect() as conn:
                 # First, add the sparse vector column if it doesn't exist
-                if not self._check_sparse_vector_column_exists():
+                if not OceanBaseUtil.check_sparse_vector_column_exists(
+                    self.obvector, self.collection_name, self.sparse_vector_field
+                ):
                     alter_table_sql = text(
                         f"ALTER TABLE {self.collection_name} "
                         f"ADD COLUMN {self.sparse_vector_field} SPARSEVECTOR"
@@ -1814,7 +1664,9 @@ class OceanBaseVectorStore(VectorStoreBase):
                     logger.debug("DEBUG: Sparse vector column created successfully for '%s'", self.collection_name)
                 
                 # Then, create the sparse vector index
-                if not self._check_sparse_vector_index_exists():
+                if not OceanBaseUtil.check_sparse_vector_index_exists(
+                    self.obvector, self.collection_name
+                ):
                     self._create_sparse_vector_index()
                     
         except Exception as e:
