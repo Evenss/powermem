@@ -920,27 +920,33 @@ class OceanBaseVectorStore(VectorStoreBase):
         
         Uses weights configured at initialization (self.vector_weight and self.fts_weight)
         to control the contribution of vector search vs full-text search.
+        
+        Implements document-level weight normalization: each document's score is normalized
+        by the sum of weights of all retrieval paths that found it.
         """
         # Create mapping of document ID to result data
         all_docs = {}
 
-        # Process vector search results (rank-based scoring with weight)
+        # Step 1: Process vector search results (rank-based scoring with weight)
         for rank, result in enumerate(vector_results, 1):
-            rrf_score = self.vector_weight * (1.0 / (k + rank))
+            vector_rrf_score = self.vector_weight * (1.0 / (k + rank))
             all_docs[result.id] = {
                 'result': result,
                 'vector_rank': rank,
                 'fts_rank': None,
-                'rrf_score': rrf_score
+                'vector_rrf_score': vector_rrf_score,  # 保存向量路径的原始分数
+                'fts_rrf_score': 0.0,  # 初始化FTS分数为0
+                'rrf_score': vector_rrf_score
             }
 
-        # Process FTS results (add or update RRF scores with weight)
+        # Step 2: Process FTS results (add or update RRF scores with weight)
         for rank, result in enumerate(fts_results, 1):
             fts_rrf_score = self.fts_weight * (1.0 / (k + rank))
 
             if result.id in all_docs:
                 # Document found in both searches - combine RRF scores
                 all_docs[result.id]['fts_rank'] = rank
+                all_docs[result.id]['fts_rrf_score'] = fts_rrf_score  # 保存FTS路径的原始分数
                 all_docs[result.id]['rrf_score'] += fts_rrf_score
             else:
                 # Document only in FTS results
@@ -948,28 +954,56 @@ class OceanBaseVectorStore(VectorStoreBase):
                     'result': result,
                     'vector_rank': None,
                     'fts_rank': rank,
+                    'vector_rrf_score': 0.0,  # 初始化向量分数为0
+                    'fts_rrf_score': fts_rrf_score,  # 保存FTS路径的原始分数
                     'rrf_score': fts_rrf_score
                 }
 
-        # Convert to final results and sort by RRF score
+        # Step 3: 权重归一化 - 在堆排序之前进行
+        # 对每个文档，根据它被几路召回来计算有效权重总和，并归一化分数
+        for doc_id, doc_data in all_docs.items():
+            # 计算有效权重总和
+            effective_weight_sum = 0.0
+            if doc_data['vector_rank'] is not None:
+                effective_weight_sum += self.vector_weight
+            if doc_data['fts_rank'] is not None:
+                effective_weight_sum += self.fts_weight
+            
+            # 归一化：将累加的RRF分数除以有效权重总和
+            if effective_weight_sum > 0:
+                doc_data['normalized_rrf_score'] = doc_data['rrf_score'] / effective_weight_sum
+                doc_data['effective_weight_sum'] = effective_weight_sum
+            else:
+                # 理论上不应该发生（文档至少被一路召回）
+                doc_data['normalized_rrf_score'] = 0.0
+                doc_data['effective_weight_sum'] = 0.0
+
+        # Step 4: 使用归一化后的分数进行堆排序
         heap = []
         for doc_id, doc_data in all_docs.items():
-            # Use document ID as tiebreaker to avoid dict comparison when rrf_scores are equal
+            # 使用归一化后的分数进行排序
+            normalized_score = doc_data['normalized_rrf_score']
+            # Use document ID as tiebreaker to avoid dict comparison when scores are equal
             if len(heap) < limit:
-                heapq.heappush(heap, (doc_data['rrf_score'], doc_id, doc_data))
-            elif doc_data['rrf_score'] > heap[0][0]:
-                heapq.heapreplace(heap, (doc_data['rrf_score'], doc_id, doc_data))
+                heapq.heappush(heap, (normalized_score, doc_id, doc_data))
+            elif normalized_score > heap[0][0]:
+                heapq.heapreplace(heap, (normalized_score, doc_id, doc_data))
 
+        # Step 5: 构建最终结果
         final_results = []
         for score, _, doc_data in sorted(heap, key=lambda x: x[0], reverse=True):
             result = doc_data['result']
-            result.score = score
+            result.score = score  # 使用归一化后的分数
             # Add ranking information to metadata for debugging
             result.payload['_fusion_info'] = {
                 'vector_rank': doc_data['vector_rank'],
                 'fts_rank': doc_data['fts_rank'],
-                'rrf_score': score,
-                'fusion_method': 'rrf',
+                'vector_rrf_score': doc_data['vector_rrf_score'],  # 向量路径原始分数
+                'fts_rrf_score': doc_data['fts_rrf_score'],  # FTS路径原始分数
+                'raw_rrf_score': doc_data['rrf_score'],  # 归一化前的累加分数
+                'normalized_rrf_score': score,  # 归一化后的分数
+                'effective_weight_sum': doc_data['effective_weight_sum'],  # 有效权重总和
+                'fusion_method': 'rrf_with_normalization',
                 'vector_weight': self.vector_weight,
                 'fts_weight': self.fts_weight
             }

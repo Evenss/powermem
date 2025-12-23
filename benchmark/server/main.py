@@ -135,6 +135,14 @@ def load_config() -> Dict[str, Any]:
             }
         },
         "history_db_path": HISTORY_DB_PATH,
+        "reranker": {
+            "enabled": True,
+            "provider": "qwen",
+            "config": {
+                "api_key": EMBEDDER_API_KEY,
+                "model": "qwen3-rerank",
+            }
+        }
     }
 
 
