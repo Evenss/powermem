@@ -23,9 +23,13 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# add your model's MetaData object here
-# for 'autogenerate' support
-target_metadata = None
+# 导入ORM模型以支持autogenerate
+# 注意：使用默认的MemoryRecord模型（表名: memories, 维度: 1536）
+# 对于动态表名，autogenerate可能需要额外配置
+from src.powermem.storage.oceanbase.models import Base
+
+# 设置target_metadata以支持autogenerate
+target_metadata = Base.metadata
 
 
 def get_url():

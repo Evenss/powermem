@@ -7,9 +7,9 @@ Create Date: 2025-01-01 00:00:00.000000
 This migration represents the baseline schema state before sparse vector support.
 It doesn't perform any actual migrations, but marks the starting point for version tracking.
 
-Expected baseline schema:
+Expected baseline schema (matching MemoryRecord ORM model):
 - id (BIGINT, primary key)
-- embedding (VECTOR)
+- embedding (VECTOR) - pyobvector.VECTOR type
 - document (LONGTEXT)
 - metadata (JSON)
 - user_id, agent_id, run_id, actor_id (VARCHAR)
@@ -18,6 +18,16 @@ Expected baseline schema:
 - category (VARCHAR)
 - fulltext_content (LONGTEXT)
 - fulltext index on fulltext_content
+
+Usage:
+    # For existing databases, stamp the baseline:
+    alembic stamp 020_baseline
+    
+    # Then upgrade to add sparse vector support:
+    alembic upgrade head
+    
+    # Or generate new migrations with autogenerate:
+    alembic revision --autogenerate -m "description"
 """
 from typing import Sequence, Union
 

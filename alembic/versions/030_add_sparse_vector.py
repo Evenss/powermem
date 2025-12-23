@@ -5,7 +5,7 @@ Revises: 020_baseline
 Create Date: 2025-01-01 00:01:00.000000
 
 This migration adds sparse vector support to the existing schema:
-- Adds sparse_embedding column (SPARSEVECTOR type)
+- Adds sparse_embedding column (SPARSE_VECTOR type from pyobvector)
 - Creates sparse vector index
 """
 from typing import Sequence, Union
@@ -15,7 +15,15 @@ import os
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy import text
+from sqlalchemy import text, Column
+
+try:
+    from pyobvector import SPARSE_VECTOR
+except ImportError:
+    raise ImportError(
+        "pyobvector is required for this migration. "
+        "Please install it: pip install pyobvector"
+    )
 
 # revision identifiers, used by Alembic.
 revision: str = '030_add_sparse_vector'
@@ -40,12 +48,12 @@ def get_table_name() -> str:
     except Exception as e:
         logger.warning(f"Failed to load table name from config: {e}")
     
-    # 回退到环境变量
+    # 回退到环境变量，默认为 'memories'（与ORM模型一致）
     return os.getenv('OCEANBASE_COLLECTION', 'memories')
 
 
 def check_sparse_vector_support(connection) -> bool:
-    """检查数据库是否支持SPARSEVECTOR类型"""
+    """检查数据库是否支持SPARSE_VECTOR类型"""
     try:
         # 获取版本信息
         result = connection.execute(text("SELECT VERSION()"))
@@ -127,9 +135,9 @@ def upgrade() -> None:
     """
     Upgrade to version 030 with sparse vector support.
     
-    Adds:
-    1. sparse_embedding column (SPARSEVECTOR type, nullable)
-    2. sparse_embedding_idx vector index
+    Uses Alembic standard operations:
+    1. op.add_column() for adding sparse_embedding column
+    2. op.execute() for creating special vector index
     """
     connection = op.get_bind()
     table_name = get_table_name()
@@ -144,32 +152,31 @@ def upgrade() -> None:
     # 检查数据库是否支持稀疏向量
     if not check_sparse_vector_support(connection):
         logger.warning(
-            "Database does not support SPARSEVECTOR type. "
+            "Database does not support SPARSE_VECTOR type. "
             "Sparse vector features will not be available. "
             "Please upgrade to seekdb or OceanBase >= 4.5.0 for sparse vector support."
         )
         # 不抛出异常，允许迁移继续（只是没有稀疏向量支持）
         return
     
-    # 1. 添加 sparse_embedding 列（如果不存在）
+    # 1. 添加 sparse_embedding 列（使用Alembic标准操作）
     if not column_exists(connection, table_name, 'sparse_embedding'):
         logger.info(f"Adding sparse_embedding column to table '{table_name}'")
-        connection.execute(text(
-            f"ALTER TABLE {table_name} ADD COLUMN sparse_embedding SPARSEVECTOR"
-        ))
-        connection.commit()
+        op.add_column(
+            table_name,
+            Column('sparse_embedding', SPARSE_VECTOR, nullable=True)
+        )
         logger.info("sparse_embedding column added successfully")
     else:
         logger.info("sparse_embedding column already exists, skipping")
     
-    # 2. 创建稀疏向量索引（如果不存在）
+    # 2. 创建稀疏向量索引（OceanBase特殊语法，使用op.execute）
     if not index_exists(connection, table_name, 'sparse_embedding_idx'):
         logger.info(f"Creating sparse vector index on table '{table_name}'")
-        connection.execute(text(
+        op.execute(
             f"CREATE VECTOR INDEX sparse_embedding_idx ON {table_name}(sparse_embedding) "
             f"WITH (lib=vsag, type=sindi, distance=inner_product)"
-        ))
-        connection.commit()
+        )
         logger.info("sparse_embedding_idx created successfully")
     else:
         logger.info("sparse_embedding_idx already exists, skipping")
@@ -181,9 +188,9 @@ def downgrade() -> None:
     """
     Downgrade from version 030 to 020 (remove sparse vector support).
     
-    Removes:
-    1. sparse_embedding_idx vector index
-    2. sparse_embedding column
+    Uses Alembic standard operations:
+    1. op.drop_index() for removing vector index
+    2. op.drop_column() for removing sparse_embedding column
     """
     connection = op.get_bind()
     table_name = get_table_name()
@@ -195,27 +202,20 @@ def downgrade() -> None:
         logger.info(f"Table '{table_name}' does not exist, skipping downgrade")
         return
     
-    # 1. 删除稀疏向量索引（如果存在）
+    # 1. 删除稀疏向量索引（使用op.execute因为是特殊索引类型）
     if index_exists(connection, table_name, 'sparse_embedding_idx'):
         logger.info(f"Dropping sparse vector index from table '{table_name}'")
-        connection.execute(text(
-            f"DROP INDEX sparse_embedding_idx ON {table_name}"
-        ))
-        connection.commit()
+        op.execute(f"DROP INDEX sparse_embedding_idx ON {table_name}")
         logger.info("sparse_embedding_idx dropped successfully")
     else:
         logger.info("sparse_embedding_idx does not exist, skipping")
     
-    # 2. 删除 sparse_embedding 列（如果存在）
+    # 2. 删除 sparse_embedding 列（使用Alembic标准操作）
     if column_exists(connection, table_name, 'sparse_embedding'):
         logger.info(f"Dropping sparse_embedding column from table '{table_name}'")
-        connection.execute(text(
-            f"ALTER TABLE {table_name} DROP COLUMN sparse_embedding"
-        ))
-        connection.commit()
+        op.drop_column(table_name, 'sparse_embedding')
         logger.info("sparse_embedding column dropped successfully")
     else:
         logger.info("sparse_embedding column does not exist, skipping")
     
     logger.info("Downgrade to version 020 completed successfully")
-

@@ -17,6 +17,7 @@ from powermem.utils.oceanbase_util import OceanBaseUtil
 try:
     from pyobvector import (
         VECTOR,
+        SPARSE_VECTOR,
         ObVecClient,
         cosine_distance,
         inner_product,
@@ -33,6 +34,7 @@ except ImportError as e:
     )
 
 from powermem.storage.oceanbase import constants
+from powermem.storage.oceanbase.models import get_model_for_table
 
 logger = logging.getLogger(__name__)
 
@@ -368,7 +370,14 @@ class OceanBaseVectorStore(VectorStoreBase):
         # Check and create sparse vector column/index if enabled
         if self.include_sparse:
             self._check_and_create_sparse_vector_column_and_index()
-            
+        
+        # 使用ORM模型获取表对象（支持autogenerate）
+        self.model_class = get_model_for_table(
+            self.collection_name,
+            self.embedding_model_dims,
+            self.include_sparse
+        )
+        # 保持向后兼容：self.table仍可用于原有的SQLAlchemy操作
         self.table = Table(self.collection_name, self.obvector.metadata_obj, autoload_with=self.obvector.engine)
 
     def insert(self,
