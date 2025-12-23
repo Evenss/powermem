@@ -243,6 +243,24 @@ def load_config_from_env() -> Dict[str, Any]:
         }
     }
     
+    # Build Sparse Embedder config (if enabled for OceanBase)
+    sparse_embedder_provider = os.getenv('SPARSE_EMBEDDER_PROVIDER')
+    if sparse_embedder_provider:
+        sparse_embedder_config = {
+            'api_key': os.getenv('SPARSE_EMBEDDER_API_KEY'),
+            'model': os.getenv('SPARSE_EMBEDDER_MODEL'),
+            'embedding_dims': int(os.getenv('SPARSE_EMBEDDER_DIMS', '1536')),
+        }
+        
+        # Provider-specific base_url
+        if sparse_embedder_provider == 'qwen':
+            sparse_embedder_config['dashscope_base_url'] = os.getenv('QWEN_SPARSE_BASE_URL')
+        
+        config['sparse_embedder'] = {
+            'provider': sparse_embedder_provider,
+            'config': sparse_embedder_config
+        }
+    
     # Build graph_store config if enabled
     graph_store_enabled = os.getenv('GRAPH_STORE_ENABLED', 'false').lower() == 'true'
     if graph_store_enabled:

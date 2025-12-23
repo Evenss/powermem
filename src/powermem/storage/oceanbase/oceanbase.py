@@ -326,6 +326,14 @@ class OceanBaseVectorStore(VectorStoreBase):
 
     def _create_col(self):
         """Create a new collection."""
+        
+        # Schema版本检测和自动升级
+        from .schema_version import check_and_upgrade_schema
+        
+        if not check_and_upgrade_schema(self.obvector, self.collection_name, self.include_sparse):
+            raise RuntimeError(
+                "Failed to upgrade schema. Please check logs for details."
+            )
 
         if self.embedding_model_dims is None:
             raise ValueError(
@@ -1177,6 +1185,57 @@ class OceanBaseVectorStore(VectorStoreBase):
         else:
             return self._weighted_fusion(vector_results, fts_results, sparse_results, limit)
 
+    def _normalize_weights_adaptively(
+        self,
+        all_docs: Dict,
+        vector_w: float,
+        fts_w: float,
+        sparse_w: float,
+        k: int = 60
+    ) -> Dict:
+        """
+        对每个文档的权重进行自适应归一化
+        
+        原理：根据文档实际被几路召回，动态调整权重总和为1.0，
+        解决混合状态下（部分数据有稀疏向量，部分没有）的不公平性问题。
+        
+        Args:
+            all_docs: 文档字典 {doc_id: {'result': ..., 'vector_rank': ..., 'fts_rank': ..., 'sparse_rank': ..., 'rrf_score': ...}}
+            vector_w: 向量搜索权重
+            fts_w: 全文搜索权重
+            sparse_w: 稀疏向量搜索权重
+            k: RRF常量（默认60）
+        
+        Returns:
+            归一化后的all_docs（修改了rrf_score）
+        """
+        for doc_id, doc_data in all_docs.items():
+            # 统计该文档被几路召回及其对应权重
+            active_weights = []
+            if doc_data['vector_rank'] is not None:
+                active_weights.append(('vector', vector_w, doc_data['vector_rank']))
+            if doc_data['fts_rank'] is not None:
+                active_weights.append(('fts', fts_w, doc_data['fts_rank']))
+            if doc_data['sparse_rank'] is not None:
+                active_weights.append(('sparse', sparse_w, doc_data['sparse_rank']))
+            
+            # 计算有效权重总和
+            total_weight = sum(w for _, w, _ in active_weights)
+            
+            if total_weight == 0:
+                continue
+            
+            # 归一化并重新计算rrf_score
+            normalized_score = 0.0
+            
+            for path, weight, rank in active_weights:
+                normalized_weight = weight / total_weight
+                normalized_score += normalized_weight * (1.0 / (k + rank))
+            
+            doc_data['rrf_score'] = normalized_score
+        
+        return all_docs
+
     def _rrf_fusion(self, vector_results: List[OutputData], fts_results: List[OutputData],
                     sparse_results: Optional[List[OutputData]],
                     limit: int, k: int = 60, sparse_embedding: Optional[Dict[int, float]] = None):
@@ -1244,6 +1303,13 @@ class OceanBaseVectorStore(VectorStoreBase):
                     'sparse_rank': rank,
                     'rrf_score': sparse_rrf_score
                 }
+
+        # 权重自适应归一化：解决混合状态下的不公平性
+        # 对于每个文档，根据实际参与的路径数重新归一化权重
+        all_docs = self._normalize_weights_adaptively(
+            all_docs, vector_w, fts_w, sparse_w, k
+        )
+        logger.debug("Applied adaptive weight normalization")
 
         # Convert to final results and sort by RRF score
         heap = []
