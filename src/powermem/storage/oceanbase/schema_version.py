@@ -13,22 +13,22 @@ from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
-# Schema版本定义
+# Schema版本定义（使用项目版本号）
 SCHEMA_VERSIONS = {
-    "v1": {
-        "alembic_revision": "000_baseline_v1",
+    "020": {
+        "alembic_revision": "020_baseline",
         "features": ["dense_vector", "fulltext"],
         "required_columns": ["embedding", "document", "fulltext_content"]
     },
-    "v2": {
-        "alembic_revision": "001_add_sparse_vector",
+    "030": {
+        "alembic_revision": "030_add_sparse_vector",
         "features": ["dense_vector", "fulltext", "sparse_vector"],
         "required_columns": ["embedding", "document", "fulltext_content", "sparse_embedding"]
     }
 }
 
 # 当前SDK要求的schema版本
-CURRENT_SCHEMA_VERSION = "v2"
+CURRENT_SCHEMA_VERSION = "030"
 
 
 class SchemaVersionManager:
@@ -50,7 +50,7 @@ class SchemaVersionManager:
         获取当前数据库的schema版本
         
         Returns:
-            版本字符串 ("v1", "v2", "none", 或 "unknown")
+            版本字符串 ("020", "030", "none", 或 "unknown")
         """
         try:
             with self.obvector.engine.connect() as conn:
@@ -99,11 +99,11 @@ class SchemaVersionManager:
                 has_sparse = result.scalar() > 0
                 
                 if has_sparse:
-                    logger.info("Detected v2 schema (manual creation or pre-alembic)")
-                    return "v2"
+                    logger.info("Detected version 030 schema (manual creation or pre-alembic)")
+                    return "030"
                 else:
-                    logger.info("Detected v1 schema (legacy)")
-                    return "v1"
+                    logger.info("Detected version 020 schema (legacy)")
+                    return "020"
                     
         except Exception as e:
             logger.error(f"Failed to detect schema version: {e}", exc_info=True)
@@ -274,9 +274,9 @@ def check_and_upgrade_schema(obvector, collection_name: str, include_sparse: boo
         logger.info("Fresh installation detected, will create v2 schema directly")
         return True
     
-    # 如果是v1且需要稀疏向量支持，执行升级
-    if current_version == "v1" and include_sparse:
-        logger.info("Detected v1 schema, upgrading to v2 for sparse vector support...")
+    # 如果是020且需要稀疏向量支持，执行升级
+    if current_version == "020" and include_sparse:
+        logger.info("Detected version 020 schema, upgrading to 030 for sparse vector support...")
         
         # 先初始化alembic_version表（如果不存在）
         with obvector.engine.connect() as conn:
@@ -294,12 +294,12 @@ def check_and_upgrade_schema(obvector, collection_name: str, include_sparse: boo
         # 执行升级
         return manager.run_upgrade()
     
-    # 如果已经是v2或更高版本
-    if current_version == "v2":
-        logger.info("Schema is already at v2")
+    # 如果已经是030或更高版本
+    if current_version == "030":
+        logger.info("Schema is already at version 030")
         return True
     
-    # 其他情况（v1但不需要sparse，或unknown）
+    # 其他情况（020但不需要sparse，或unknown）
     logger.info(f"Current schema version: {current_version}, no upgrade needed")
     return True
 

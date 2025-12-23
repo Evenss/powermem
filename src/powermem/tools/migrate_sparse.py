@@ -4,80 +4,52 @@
 用于将历史数据迁移到稀疏向量格式。
 
 使用方式:
-    python -m powermem.tools.migrate_sparse --dry-run
-    python -m powermem.tools.migrate_sparse --batch-size 500 --delay 0.2
-    python -m powermem.tools.migrate_sparse --workers 4 --worker-id 0
+    from powermem import Memory
+    from powermem.tools.migrate_sparse import migrate_sparse_vector
+    
+    memory = Memory(config=config)
+    migrate_sparse_vector(
+        memory=memory,
+        batch_size=1000,
+        delay=0.1,
+        dry_run=False
+    )
 """
-import argparse
 import logging
-import os
-import sys
 import time
 from typing import Dict, List, Optional, Any
 
-# 设置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+from src.powermem.utils import OceanBaseUtil
+
 logger = logging.getLogger(__name__)
-
-
-def parse_args():
-    """解析命令行参数"""
-    parser = argparse.ArgumentParser(
-        description='Migrate historical data to add sparse embeddings'
-    )
-    parser.add_argument(
-        '--batch-size',
-        type=int,
-        default=1000,
-        help='Batch size for processing (default: 1000)'
-    )
-    parser.add_argument(
-        '--workers',
-        type=int,
-        default=1,
-        help='Number of parallel workers (default: 1)'
-    )
-    parser.add_argument(
-        '--worker-id',
-        type=int,
-        default=0,
-        help='Worker ID (0 to workers-1)'
-    )
-    parser.add_argument(
-        '--delay',
-        type=float,
-        default=0.1,
-        help='Delay in seconds between batches (default: 0.1)'
-    )
-    parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Dry run mode (test with 100 records, no write)'
-    )
-    return parser.parse_args()
 
 
 class SparseMigrationWorker:
     """稀疏向量迁移Worker"""
     
-    def __init__(self, config: Dict[str, Any], args):
+    def __init__(
+        self,
+        memory,
+        module: str = 'sparse_vector',
+        batch_size: int = 1000,
+        delay: float = 0.1,
+        dry_run: bool = False
+    ):
         """
         初始化Worker
         
         Args:
-            config: 从环境变量加载的配置
-            args: 命令行参数
+            memory: Memory对象实例
+            module: 迁移模块名称（默认'sparse_vector'）
+            batch_size: 批量处理大小
+            delay: 批次间延迟（秒）
+            dry_run: 是否为dry-run模式（测试100条数据）
         """
-        self.config = config
-        self.args = args
-        self.batch_size = args.batch_size
-        self.worker_id = args.worker_id
-        self.workers = args.workers
-        self.delay = args.delay
-        self.dry_run = args.dry_run
+        self.memory = memory
+        self.module = module
+        self.batch_size = batch_size
+        self.delay = delay
+        self.dry_run = dry_run
         
         # 统计信息
         self.total_count = 0
@@ -85,83 +57,34 @@ class SparseMigrationWorker:
         self.failed_count = 0
         self.start_time = None
         
-        # 初始化组件
-        self._init_database()
-        self._init_sparse_embedder()
-        self._init_audit()
+        # 从Memory对象获取必要的组件
+        self._init_from_memory()
         
-    def _init_database(self):
-        """初始化数据库连接"""
-        try:
-            from sqlalchemy import create_engine
-            
-            vector_store_config = self.config.get('vector_store', {}).get('config', {})
-            connection_args = vector_store_config.get('connection_args', {})
-            
-            # 如果没有connection_args，尝试直接从config读取
-            if not connection_args:
-                connection_args = {
-                    'host': vector_store_config.get('host', os.getenv('OCEANBASE_HOST', '127.0.0.1')),
-                    'port': vector_store_config.get('port', os.getenv('OCEANBASE_PORT', '2881')),
-                    'user': vector_store_config.get('user', os.getenv('OCEANBASE_USER', 'root@sys')),
-                    'password': vector_store_config.get('password', os.getenv('OCEANBASE_PASSWORD', 'password')),
-                    'db_name': vector_store_config.get('db_name', os.getenv('OCEANBASE_DATABASE', 'powermem'))
-                }
-            
-            host = connection_args.get('host', '127.0.0.1')
-            port = connection_args.get('port', 2881)
-            user = connection_args.get('user', 'root@sys')
-            password = connection_args.get('password', 'password')
-            db_name = connection_args.get('db_name', 'powermem')
-            
-            # 获取表名
-            self.table_name = vector_store_config.get('collection_name', os.getenv('OCEANBASE_COLLECTION', 'memories'))
-            self.text_field = vector_store_config.get('text_field', 'document')
-            
-            # 构建连接URL
-            url = f"mysql+pymysql://{user}:{password}@{host}:{port}/{db_name}"
-            self.engine = create_engine(url)
-            
-            logger.info(f"Database connection initialized: {host}:{port}/{db_name}")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize database: {e}")
-            raise
-    
-    def _init_sparse_embedder(self):
-        """初始化稀疏嵌入器"""
-        try:
-            from powermem.integrations.embeddings.sparse_factory import SparseEmbedderFactory
-            
-            sparse_config = self.config.get('sparse_embedder', {})
-            if not sparse_config:
-                raise ValueError(
-                    "sparse_embedder config not found. "
-                    "Please set SPARSE_EMBEDDER_PROVIDER environment variable."
-                )
-            
-            provider = sparse_config.get('provider')
-            config_dict = sparse_config.get('config', {})
-            
-            self.sparse_embedder = SparseEmbedderFactory.create(provider, config_dict)
-            logger.info(f"Sparse embedder initialized: {provider}")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize sparse embedder: {e}")
-            raise
-    
-    def _init_audit(self):
-        """初始化审计日志"""
-        try:
-            from powermem.core.audit import AuditLogger
-            
-            audit_config = self.config.get('audit', {})
-            self.audit = AuditLogger(audit_config)
-            logger.info("Audit logger initialized")
-            
-        except Exception as e:
-            logger.warning(f"Failed to initialize audit logger: {e}")
-            self.audit = None
+    def _init_from_memory(self):
+        """从Memory对象初始化组件"""
+        # 获取storage
+        self.storage = self.memory.storage
+        if not hasattr(self.storage, 'obvector'):
+            raise ValueError("Memory storage must be OceanBaseVectorStore")
+        
+        # 获取数据库引擎
+        self.engine = self.storage.obvector.engine
+        self.table_name = self.storage.collection_name
+        self.text_field = self.storage.text_field
+        
+        # 获取稀疏嵌入器
+        self.sparse_embedder = getattr(self.memory, 'sparse_embedder', None)
+        if not self.sparse_embedder:
+            raise ValueError(
+                "sparse_embedder not found in Memory object. "
+                "Please configure sparse_embedder in your config."
+            )
+        
+        # 获取审计日志
+        self.audit = getattr(self.memory, 'audit', None)
+        
+        logger.info(f"Initialized migration worker for module: {self.module}")
+        logger.info(f"Database table: {self.table_name}")
     
     def _get_total_count(self) -> int:
         """获取待迁移数据总数"""
@@ -174,20 +97,18 @@ class SparseMigrationWorker:
             ))
             return result.scalar()
     
-    def _fetch_batch(self, round_num: int) -> List[Dict]:
+    def _fetch_batch(self, offset: int) -> List[Dict]:
         """
         获取一批待迁移数据
         
         Args:
-            round_num: 当前轮次（从0开始）
+            offset: 偏移量
         
         Returns:
             记录列表 [{'id': ..., 'text_content': ...}, ...]
         """
         from sqlalchemy import text
         
-        # 多worker轮询分片
-        offset = self.worker_id * self.batch_size + round_num * self.workers * self.batch_size
         limit = 100 if self.dry_run else self.batch_size
         
         with self.engine.connect() as conn:
@@ -226,13 +147,6 @@ class SparseMigrationWorker:
         
         return results
     
-    def _format_sparse_vector(self, sparse_dict: Dict[int, float]) -> str:
-        """格式化稀疏向量为SQL字符串"""
-        if not sparse_dict:
-            return "{}"
-        formatted = "{" + ", ".join(f"{k}:{v}" for k, v in sparse_dict.items()) + "}"
-        return formatted
-    
     def _update_batch(self, updates: List[Dict]) -> int:
         """
         批量更新数据库
@@ -257,7 +171,7 @@ class SparseMigrationWorker:
                     continue
                     
                 try:
-                    sparse_str = self._format_sparse_vector(update['sparse_embedding'])
+                    sparse_str = OceanBaseUtil.format_sparse_vector(update['sparse_embedding'])
                     conn.execute(text(
                         f"UPDATE {self.table_name} "
                         f"SET sparse_embedding = '{sparse_str}' "
@@ -313,9 +227,9 @@ class SparseMigrationWorker:
         self.start_time = time.time()
         self.total_count = self._get_total_count()
         
-        logger.info(f"Starting migration for Worker {self.worker_id}")
+        logger.info(f"Starting migration for module: {self.module}")
         logger.info(f"Total records to migrate: {self.total_count}")
-        logger.info(f"Batch size: {self.batch_size}, Workers: {self.workers}")
+        logger.info(f"Batch size: {self.batch_size}")
         
         if self.dry_run:
             logger.info("[DRY RUN] Mode enabled - will only test with 100 records")
@@ -323,26 +237,25 @@ class SparseMigrationWorker:
         # 记录开始事件
         self._log_audit_event('started', {
             'status': 'started',
-            'worker_id': self.worker_id,
-            'total_workers': self.workers,
+            'module': self.module,
             'total_records': self.total_count,
             'batch_size': self.batch_size,
             'dry_run': self.dry_run
         })
         
-        round_num = 0
+        offset = 0
         
         try:
             if use_rich:
-                self._run_with_rich(round_num)
+                self._run_with_rich(offset)
             else:
-                self._run_simple(round_num)
+                self._run_simple(offset)
             
             # 记录成功结束事件
             duration = time.time() - self.start_time
             self._log_audit_event('completed', {
                 'status': 'completed',
-                'worker_id': self.worker_id,
+                'module': self.module,
                 'total_records': self.total_count,
                 'migrated_count': self.migrated_count,
                 'failed_count': self.failed_count,
@@ -351,6 +264,7 @@ class SparseMigrationWorker:
             
             logger.info("=" * 50)
             logger.info("Migration completed!")
+            logger.info(f"  Module: {self.module}")
             logger.info(f"  Migrated: {self.migrated_count}")
             logger.info(f"  Failed: {self.failed_count}")
             logger.info(f"  Duration: {self._format_duration(duration)}")
@@ -359,7 +273,7 @@ class SparseMigrationWorker:
             # 记录失败事件
             self._log_audit_event('failed', {
                 'status': 'failed',
-                'worker_id': self.worker_id,
+                'module': self.module,
                 'error': str(e),
                 'migrated_count': self.migrated_count,
                 'failed_count': self.failed_count
@@ -374,11 +288,11 @@ class SparseMigrationWorker:
         speed = self.migrated_count / elapsed if elapsed > 0 else 0
         progress_pct = (self.migrated_count / self.total_count * 100) if self.total_count > 0 else 0
         
-        table = Table(title=f"Worker {self.worker_id} Migration Progress")
+        table = Table(title=f"Migration Progress - {self.module}")
         table.add_column("Metric", style="cyan")
         table.add_column("Value", style="green")
         
-        table.add_row("Worker ID", str(self.worker_id))
+        table.add_row("Module", self.module)
         table.add_row("Total Records", str(self.total_count))
         table.add_row("Migrated", f"{self.migrated_count} ({progress_pct:.1f}%)")
         table.add_row("Failed", str(self.failed_count))
@@ -390,17 +304,17 @@ class SparseMigrationWorker:
         
         return table
     
-    def _run_with_rich(self, round_num: int):
+    def _run_with_rich(self, offset: int):
         """使用rich库运行（带动态进度显示）"""
         from rich.live import Live
         
         with Live(self._create_progress_table(), refresh_per_second=2) as live:
             while True:
                 # 获取一批数据
-                batch = self._fetch_batch(round_num)
+                batch = self._fetch_batch(offset)
                 
                 if not batch:
-                    logger.info(f"Worker {self.worker_id}: No more data to process")
+                    logger.info("No more data to process")
                     break
                 
                 # 提取文本
@@ -434,16 +348,16 @@ class SparseMigrationWorker:
                 if self.delay > 0:
                     time.sleep(self.delay)
                 
-                round_num += 1
+                offset += self.batch_size
     
-    def _run_simple(self, round_num: int):
+    def _run_simple(self, offset: int):
         """简单模式运行（无rich库）"""
         while True:
             # 获取一批数据
-            batch = self._fetch_batch(round_num)
+            batch = self._fetch_batch(offset)
             
             if not batch:
-                logger.info(f"Worker {self.worker_id}: No more data to process")
+                logger.info("No more data to process")
                 break
             
             # 提取文本
@@ -472,7 +386,7 @@ class SparseMigrationWorker:
             progress_pct = (self.migrated_count / self.total_count * 100) if self.total_count > 0 else 0
             
             logger.info(
-                f"Worker {self.worker_id}: {self.migrated_count}/{self.total_count} "
+                f"{self.migrated_count}/{self.total_count} "
                 f"({progress_pct:.1f}%) | Failed: {self.failed_count} | "
                 f"Speed: {speed:.1f} rec/sec"
             )
@@ -485,49 +399,70 @@ class SparseMigrationWorker:
             if self.delay > 0:
                 time.sleep(self.delay)
             
-            round_num += 1
+            offset += self.batch_size
 
 
-def main():
-    """主入口函数"""
-    args = parse_args()
+def migrate_sparse_vector(
+    memory,
+    batch_size: int = 1000,
+    delay: float = 0.1,
+    dry_run: bool = False
+) -> Dict[str, Any]:
+    """
+    迁移历史数据以添加稀疏向量
     
-    # 验证worker_id
-    if args.worker_id < 0 or args.worker_id >= args.workers:
-        logger.error(f"Invalid worker_id: {args.worker_id}. Must be between 0 and {args.workers - 1}")
-        sys.exit(1)
+    Args:
+        memory: Memory对象实例
+        batch_size: 批量处理大小（默认1000）
+        delay: 批次间延迟秒数（默认0.1）
+        dry_run: 是否为干运行模式，只测试100条数据（默认False）
     
-    # 加载配置
+    Returns:
+        迁移结果统计信息
+    
+    Example:
+        ```python
+        from powermem import Memory
+        from powermem.tools.migrate_sparse import migrate_sparse_vector
+        
+        memory = Memory(config=config)
+        
+        # 测试模式
+        result = migrate_sparse_vector(memory, dry_run=True)
+        
+        # 正式迁移
+        result = migrate_sparse_vector(memory, batch_size=500, delay=0.2)
+        
+        print(f"Migrated: {result['migrated_count']}")
+        print(f"Failed: {result['failed_count']}")
+        print(f"Duration: {result['duration']}")
+        ```
+    """
     try:
-        from powermem.config_loader import load_config_from_env
-        config = load_config_from_env()
-    except Exception as e:
-        logger.error(f"Failed to load config: {e}")
-        sys.exit(1)
-    
-    # 检查sparse_embedder配置
-    if not config.get('sparse_embedder'):
-        logger.error(
-            "sparse_embedder config not found. "
-            "Please set the following environment variables:\n"
-            "  SPARSE_EMBEDDER_PROVIDER (e.g., 'qwen')\n"
-            "  SPARSE_EMBEDDER_API_KEY\n"
-            "  SPARSE_EMBEDDER_MODEL"
+        worker = SparseMigrationWorker(
+            memory=memory,
+            module='sparse_vector',
+            batch_size=batch_size,
+            delay=delay,
+            dry_run=dry_run
         )
-        sys.exit(1)
-    
-    # 创建Worker并执行
-    try:
-        worker = SparseMigrationWorker(config, args)
         worker.run()
-    except KeyboardInterrupt:
-        logger.info("Migration interrupted by user")
-        sys.exit(130)
+        
+        duration = time.time() - worker.start_time if worker.start_time else 0
+        
+        return {
+            'status': 'success',
+            'module': 'sparse_vector',
+            'total_records': worker.total_count,
+            'migrated_count': worker.migrated_count,
+            'failed_count': worker.failed_count,
+            'duration': duration
+        }
+        
     except Exception as e:
         logger.error(f"Migration failed: {e}", exc_info=True)
-        sys.exit(1)
-
-
-if __name__ == '__main__':
-    main()
-
+        return {
+            'status': 'failed',
+            'module': 'sparse_vector',
+            'error': str(e)
+        }

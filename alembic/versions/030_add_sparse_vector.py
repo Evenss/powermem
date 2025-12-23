@@ -1,7 +1,7 @@
 """Add sparse vector support
 
-Revision ID: 001_add_sparse_vector
-Revises: 000_baseline_v1
+Revision ID: 030_add_sparse_vector
+Revises: 020_baseline
 Create Date: 2025-01-01 00:01:00.000000
 
 This migration adds sparse vector support to the existing schema:
@@ -18,8 +18,8 @@ import sqlalchemy as sa
 from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
-revision: str = '001_add_sparse_vector'
-down_revision: Union[str, None] = '000_baseline_v1'
+revision: str = '030_add_sparse_vector'
+down_revision: Union[str, None] = '020_baseline'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -125,7 +125,7 @@ def table_exists(connection, table_name: str) -> bool:
 
 def upgrade() -> None:
     """
-    Upgrade to v2 with sparse vector support.
+    Upgrade to version 030 with sparse vector support.
     
     Adds:
     1. sparse_embedding column (SPARSEVECTOR type, nullable)
@@ -174,12 +174,12 @@ def upgrade() -> None:
     else:
         logger.info("sparse_embedding_idx already exists, skipping")
     
-    logger.info("Upgrade to v2 completed successfully")
+    logger.info("Upgrade to version 030 completed successfully")
 
 
 def downgrade() -> None:
     """
-    Downgrade from v2 to v1 (remove sparse vector support).
+    Downgrade from version 030 to 020 (remove sparse vector support).
     
     Removes:
     1. sparse_embedding_idx vector index
@@ -217,5 +217,5 @@ def downgrade() -> None:
     else:
         logger.info("sparse_embedding column does not exist, skipping")
     
-    logger.info("Downgrade to v1 completed successfully")
+    logger.info("Downgrade to version 020 completed successfully")
 
