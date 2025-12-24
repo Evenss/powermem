@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "powermem"
-version = "0.2.1"
+version = "0.3.0"
 description = "Intelligent Memory System - Persistent memory layer for LLM applications"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -48,6 +48,8 @@ dependencies = [
     "google-generativeai>=0.3.0",
     "google-genai>=1.0.0",
     "dashscope>=1.14.0",
+    "alembic>=1.17.2",
+    "pymysql>=1.1.2",
 ]
 
 [project.optional-dependencies]

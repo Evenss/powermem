@@ -1,8 +1,6 @@
 """Baseline - Initial schema without sparse vector support
 
 Revision ID: 020_baseline
-Revises: 
-Create Date: 2025-01-01 00:00:00.000000
 
 This migration represents the baseline schema state before sparse vector support.
 It doesn't perform any actual migrations, but marks the starting point for version tracking.

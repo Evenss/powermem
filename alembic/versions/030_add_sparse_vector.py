@@ -2,7 +2,6 @@
 
 Revision ID: 030_add_sparse_vector
 Revises: 020_baseline
-Create Date: 2025-01-01 00:01:00.000000
 
 This migration adds sparse vector support to the existing schema:
 - Adds sparse_embedding column (SPARSE_VECTOR type from pyobvector)
