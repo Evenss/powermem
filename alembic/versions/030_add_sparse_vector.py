@@ -7,14 +7,13 @@ This migration adds sparse vector support to the existing schema:
 - Adds sparse_embedding column (SPARSE_VECTOR type from pyobvector)
 - Creates sparse vector index
 """
-from typing import Sequence, Union
 import logging
-import re
 import os
+import sys
+from typing import Sequence, Union
 
 from alembic import op
-import sqlalchemy as sa
-from sqlalchemy import text, Column
+from sqlalchemy import Column
 
 try:
     from pyobvector import SPARSE_VECTOR
@@ -23,6 +22,9 @@ except ImportError:
         "pyobvector is required for this migration. "
         "Please install it: pip install pyobvector"
     )
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+from src.powermem.utils.oceanbase_util import OceanBaseUtil
 
 # revision identifiers, used by Alembic.
 revision: str = '030_add_sparse_vector'
@@ -33,102 +35,49 @@ depends_on: Union[str, Sequence[str], None] = None
 logger = logging.getLogger('alembic.runtime.migration')
 
 
-def get_table_name() -> str:
-    """从环境变量或配置获取表名"""
-    try:
-        import sys
-        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-        from src.powermem.config_loader import load_config_from_env
-        
-        config = load_config_from_env()
-        table_name = config.get('vector_store', {}).get('config', {}).get('collection_name')
-        if table_name:
-            return table_name
-    except Exception as e:
-        logger.warning(f"Failed to load table name from config: {e}")
+def _get_table_name() -> str:
+    """
+    从 Alembic config.attributes 获取表名
     
-    # 回退到环境变量，默认为 'memories'（与ORM模型一致）
-    return os.getenv('OCEANBASE_COLLECTION', 'memories')
-
-
-def check_sparse_vector_support(connection) -> bool:
-    """检查数据库是否支持SPARSE_VECTOR类型"""
+    表名由程序运行时（OceanBaseVectorStore初始化）通过 config.attributes 传入
+    
+    Returns:
+        表名
+    
+    Raises:
+        ValueError: 如果表名未在 config.attributes 中提供
+    """
     try:
-        # 获取版本信息
-        result = connection.execute(text("SELECT VERSION()"))
-        version_str = result.scalar()
+        from alembic import context
+        config = context.config
+        table_name = config.attributes.get('table_name')
         
-        # 检查是否是seekdb
-        if 'seekdb' in version_str.lower():
-            logger.info("Detected seekdb, sparse vector is supported")
-            return True
+        if table_name is None or table_name == '':
+            raise ValueError(
+                "table_name is required in config.attributes. "
+                "This should be set by OceanBaseVectorStore during schema upgrade."
+            )
         
-        # 检查OceanBase版本
-        # 提取版本号 (格式如: 4.5.0-100000012025010101)
-        match = re.search(r'(\d+)\.(\d+)\.(\d+)', version_str)
-        if match:
-            major, minor, patch = map(int, match.groups())
-            if major > 4 or (major == 4 and minor >= 5):
-                logger.info(f"OceanBase version {major}.{minor}.{patch} supports sparse vector")
-                return True
-            else:
-                logger.warning(
-                    f"OceanBase version {major}.{minor}.{patch} does not support sparse vector. "
-                    "Requires OceanBase >= 4.5.0"
-                )
-                return False
-        
-        logger.warning("Could not determine database version")
-        return False
-        
+        logger.info(f"Using table name from config.attributes: {table_name}")
+        return table_name
     except Exception as e:
-        logger.error(f"Failed to check sparse vector support: {e}")
-        return False
+        logger.error(f"Failed to get table name from config.attributes: {e}")
+        raise
 
-
-def column_exists(connection, table_name: str, column_name: str) -> bool:
-    """检查列是否存在"""
+def _get_obvector():
+    """
+    从 config.attributes 获取 obvector 对象
+    
+    Returns:
+        obvector instance or None
+    """
     try:
-        result = connection.execute(text(
-            f"SELECT COUNT(*) FROM information_schema.COLUMNS "
-            f"WHERE TABLE_SCHEMA = DATABASE() "
-            f"AND TABLE_NAME = '{table_name}' "
-            f"AND COLUMN_NAME = '{column_name}'"
-        ))
-        return result.scalar() > 0
+        from alembic import context
+        config = context.config
+        return config.attributes.get('obvector')
     except Exception as e:
-        logger.error(f"Failed to check if column exists: {e}")
-        return False
-
-
-def index_exists(connection, table_name: str, index_name: str) -> bool:
-    """检查索引是否存在"""
-    try:
-        result = connection.execute(text(
-            f"SELECT COUNT(*) FROM information_schema.STATISTICS "
-            f"WHERE TABLE_SCHEMA = DATABASE() "
-            f"AND TABLE_NAME = '{table_name}' "
-            f"AND INDEX_NAME = '{index_name}'"
-        ))
-        return result.scalar() > 0
-    except Exception as e:
-        logger.error(f"Failed to check if index exists: {e}")
-        return False
-
-
-def table_exists(connection, table_name: str) -> bool:
-    """检查表是否存在"""
-    try:
-        result = connection.execute(text(
-            f"SELECT COUNT(*) FROM information_schema.TABLES "
-            f"WHERE TABLE_SCHEMA = DATABASE() "
-            f"AND TABLE_NAME = '{table_name}'"
-        ))
-        return result.scalar() > 0
-    except Exception as e:
-        logger.error(f"Failed to check if table exists: {e}")
-        return False
-
+        logger.error(f"Failed to get obvector from config: {e}")
+        return None
 
 def upgrade() -> None:
     """
@@ -138,18 +87,18 @@ def upgrade() -> None:
     1. op.add_column() for adding sparse_embedding column
     2. op.execute() for creating special vector index
     """
-    connection = op.get_bind()
-    table_name = get_table_name()
-    
+    table_name = _get_table_name()
+    obvector = _get_obvector()
+
     logger.info(f"Starting upgrade to add sparse vector support for table '{table_name}'")
     
     # 检查表是否存在
-    if not table_exists(connection, table_name):
+    if not OceanBaseUtil.check_table_exists(obvector, table_name):
         logger.info(f"Table '{table_name}' does not exist, skipping migration")
         return
     
     # 检查数据库是否支持稀疏向量
-    if not check_sparse_vector_support(connection):
+    if not OceanBaseUtil.check_sparse_vector_version_support(obvector):
         logger.warning(
             "Database does not support SPARSE_VECTOR type. "
             "Sparse vector features will not be available. "
@@ -159,7 +108,10 @@ def upgrade() -> None:
         return
     
     # 1. 添加 sparse_embedding 列（使用Alembic标准操作）
-    if not column_exists(connection, table_name, 'sparse_embedding'):
+    # 优先使用 ORM 检查，失败则使用 OceanBaseUtil
+    has_sparse_column = OceanBaseUtil.check_column_exists(obvector, table_name, 'sparse_embedding')
+    
+    if not has_sparse_column:
         logger.info(f"Adding sparse_embedding column to table '{table_name}'")
         op.add_column(
             table_name,
@@ -167,10 +119,10 @@ def upgrade() -> None:
         )
         logger.info("sparse_embedding column added successfully")
     else:
-        logger.info("sparse_embedding column already exists, skipping")
+        logger.info("sparse_embedding column already exists (checked via ORM/Inspector or SQL), skipping")
     
     # 2. 创建稀疏向量索引（OceanBase特殊语法，使用op.execute）
-    if not index_exists(connection, table_name, 'sparse_embedding_idx'):
+    if not OceanBaseUtil.check_index_exists(obvector, table_name, 'sparse_embedding_idx'):
         logger.info(f"Creating sparse vector index on table '{table_name}'")
         op.execute(
             f"CREATE VECTOR INDEX sparse_embedding_idx ON {table_name}(sparse_embedding) "
@@ -191,18 +143,18 @@ def downgrade() -> None:
     1. op.drop_index() for removing vector index
     2. op.drop_column() for removing sparse_embedding column
     """
-    connection = op.get_bind()
-    table_name = get_table_name()
+    table_name = _get_table_name()
+    obvector = _get_obvector()
     
     logger.info(f"Starting downgrade to remove sparse vector support from table '{table_name}'")
     
     # 检查表是否存在
-    if not table_exists(connection, table_name):
+    if not OceanBaseUtil.check_table_exists(obvector, table_name):
         logger.info(f"Table '{table_name}' does not exist, skipping downgrade")
         return
     
     # 1. 删除稀疏向量索引（使用op.execute因为是特殊索引类型）
-    if index_exists(connection, table_name, 'sparse_embedding_idx'):
+    if OceanBaseUtil.check_index_exists(obvector, table_name, 'sparse_embedding_idx'):
         logger.info(f"Dropping sparse vector index from table '{table_name}'")
         op.execute(f"DROP INDEX sparse_embedding_idx ON {table_name}")
         logger.info("sparse_embedding_idx dropped successfully")
@@ -210,7 +162,7 @@ def downgrade() -> None:
         logger.info("sparse_embedding_idx does not exist, skipping")
     
     # 2. 删除 sparse_embedding 列（使用Alembic标准操作）
-    if column_exists(connection, table_name, 'sparse_embedding'):
+    if OceanBaseUtil.check_column_exists(obvector, table_name, 'sparse_embedding'):
         logger.info(f"Dropping sparse_embedding column from table '{table_name}'")
         op.drop_column(table_name, 'sparse_embedding')
         logger.info("sparse_embedding column dropped successfully")

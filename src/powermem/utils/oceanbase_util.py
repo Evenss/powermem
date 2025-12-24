@@ -22,6 +22,56 @@ class OceanBaseUtil:
     """Utility class for OceanBase database checks and information retrieval."""
 
     @staticmethod
+    def check_table_exists(obvector, table_name: str) -> bool:
+        """
+        Check if a table exists.
+
+        Args:
+            obvector: The ObVecClient instance.
+            table_name: The name of the table.
+
+        Returns:
+            True if the table exists, False otherwise.
+        """
+        try:
+            with obvector.engine.connect() as conn:
+                result = conn.execute(text(
+                    f"SELECT COUNT(*) FROM information_schema.TABLES "
+                    f"WHERE TABLE_SCHEMA = DATABASE() "
+                    f"AND TABLE_NAME = '{table_name}'"
+                ))
+                return result.scalar() > 0
+        except Exception as e:
+            logger.error(f"An error occurred while checking if table exists: {e}")
+            return False
+
+    @staticmethod
+    def check_column_exists(obvector, table_name: str, column_name: str) -> bool:
+        """
+        Check if a column exists in a table.
+
+        Args:
+            obvector: The ObVecClient instance.
+            table_name: The name of the table.
+            column_name: The name of the column.
+
+        Returns:
+            True if the column exists, False otherwise.
+        """
+        try:
+            with obvector.engine.connect() as conn:
+                result = conn.execute(text(
+                    f"SELECT COUNT(*) FROM information_schema.COLUMNS "
+                    f"WHERE TABLE_SCHEMA = DATABASE() "
+                    f"AND TABLE_NAME = '{table_name}' "
+                    f"AND COLUMN_NAME = '{column_name}'"
+                ))
+                return result.scalar() > 0
+        except Exception as e:
+            logger.error(f"An error occurred while checking if column exists: {e}")
+            return False
+
+    @staticmethod
     def check_sparse_vector_column_exists(
         obvector, collection_name: str, sparse_vector_field: str
     ) -> bool:
@@ -36,17 +86,33 @@ class OceanBaseUtil:
         Returns:
             True if the sparse vector column exists, False otherwise.
         """
+        # 使用通用的 check_column_exists 方法
+        return OceanBaseUtil.check_column_exists(obvector, collection_name, sparse_vector_field)
+
+    @staticmethod
+    def check_index_exists(obvector, table_name: str, index_name: str) -> bool:
+        """
+        Check if an index exists on a table (通用索引检查方法).
+
+        Args:
+            obvector: The ObVecClient instance.
+            table_name: The name of the table.
+            index_name: The name of the index.
+
+        Returns:
+            True if the index exists, False otherwise.
+        """
         try:
             with obvector.engine.connect() as conn:
-                result = conn.execute(text(f"DESCRIBE {collection_name}"))
-                columns = result.fetchall()
-
-                for col in columns:
-                    if col[0] == sparse_vector_field:
-                        return True
-                return False
+                result = conn.execute(text(
+                    f"SELECT COUNT(*) FROM information_schema.STATISTICS "
+                    f"WHERE TABLE_SCHEMA = DATABASE() "
+                    f"AND TABLE_NAME = '{table_name}' "
+                    f"AND INDEX_NAME = '{index_name}'"
+                ))
+                return result.scalar() > 0
         except Exception as e:
-            logger.error(f"An error occurred while checking the sparse vector column: {e}")
+            logger.error(f"An error occurred while checking if index exists: {e}")
             return False
 
     @staticmethod
@@ -61,19 +127,8 @@ class OceanBaseUtil:
         Returns:
             True if the sparse vector index exists, False otherwise.
         """
-        try:
-            with obvector.engine.connect() as conn:
-                result = conn.execute(text(f"SHOW INDEX FROM {collection_name}"))
-                indexes = result.fetchall()
-
-                for index in indexes:
-                    # Index [2] is the index name, index [4] is the column name
-                    if len(index) > 4 and index[2] == "sparse_embedding_idx":
-                        return True
-                return False
-        except Exception as e:
-            logger.error(f"An error occurred while checking the sparse vector index: {e}")
-            return False
+        # 使用通用的 check_index_exists 方法
+        return OceanBaseUtil.check_index_exists(obvector, collection_name, "sparse_embedding_idx")
 
     @staticmethod
     def check_fulltext_index_exists(obvector, collection_name: str, fulltext_field: str) -> bool:

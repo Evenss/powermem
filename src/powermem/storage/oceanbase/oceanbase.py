@@ -34,7 +34,7 @@ except ImportError as e:
     )
 
 from powermem.storage.oceanbase import constants
-from powermem.storage.oceanbase.models import get_model_for_table
+from powermem.storage.oceanbase.models import create_memory_model
 
 logger = logging.getLogger(__name__)
 
@@ -332,7 +332,13 @@ class OceanBaseVectorStore(VectorStoreBase):
         # Schema版本检测和自动升级
         from .schema_version import check_and_upgrade_schema
         
-        if not check_and_upgrade_schema(self.obvector, self.collection_name, self.include_sparse):
+        if not check_and_upgrade_schema(
+            self.obvector, 
+            self.collection_name, 
+            self.include_sparse,
+            self.embedding_model_dims,
+            self.connection_args
+        ):
             raise RuntimeError(
                 "Failed to upgrade schema. Please check logs for details."
             )
@@ -371,8 +377,8 @@ class OceanBaseVectorStore(VectorStoreBase):
         if self.include_sparse:
             self._check_and_create_sparse_vector_column_and_index()
         
-        # 使用ORM模型获取表对象（支持autogenerate）
-        self.model_class = get_model_for_table(
+        # 使用ORM模型创建表对象（支持autogenerate）
+        self.model_class = create_memory_model(
             self.collection_name,
             self.embedding_model_dims,
             self.include_sparse

@@ -46,8 +46,7 @@ def upgrade() -> None:
     This migration doesn't create tables (they should already exist),
     but validates that the baseline schema is in place.
     """
-    # 这个迁移不执行任何操作
-    # 它只是标记baseline版本的状态
+    # This migration does not perform any operation, it just marks the status of the baseline version.
     pass
 
 
