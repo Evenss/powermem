@@ -2,6 +2,7 @@
 
 此文件用于配置Alembic迁移环境，支持从环境变量读取数据库连接信息
 """
+import logging
 import os
 import sys
 from logging.config import fileConfig
@@ -23,6 +24,9 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+# 获取logger实例
+logger = logging.getLogger('alembic.env')
+
 # 导入ORM模型（主要用于 autogenerate 功能）
 # 注意：当前项目使用手动编写的迁移脚本，ORM模型在迁移执行时不是必需的
 # 但如果将来需要使用 `alembic revision --autogenerate`，则需要这些代码
@@ -40,7 +44,7 @@ if _table_name and _embedding_dims:
     
     # 动态创建模型并注册到Base.metadata
     ModelClass = create_memory_model(_table_name, _embedding_dims, _include_sparse)
-    print(f"Created ORM model: {_table_name} (dims={_embedding_dims}, sparse={_include_sparse})")
+    logger.info(f"Created ORM model: {_table_name} (dims={_embedding_dims}, sparse={_include_sparse})")
 
 # 设置target_metadata（用于autogenerate功能）
 target_metadata = Base.metadata
@@ -76,7 +80,6 @@ def get_url():
     
     # 构建MySQL连接URL (OceanBase兼容MySQL协议)
     url = f"mysql+pymysql://{user}:{password}@{host}:{port}/{db_name}"
-    print(f"Alembic database URL: mysql+pymysql://{user}:***@{host}:{port}/{db_name}")
     return url
 
 

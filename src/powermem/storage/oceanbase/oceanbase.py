@@ -34,7 +34,8 @@ except ImportError as e:
     )
 
 from powermem.storage.oceanbase import constants
-from powermem.storage.oceanbase.models import create_memory_model
+from .models import create_memory_model
+from .schema_version import check_and_upgrade_schema
 
 logger = logging.getLogger(__name__)
 
@@ -270,21 +271,8 @@ class OceanBaseVectorStore(VectorStoreBase):
             partitions=None,
         )
 
-        logger.debug("DEBUG: Table '%s' created successfully", self.collection_name)
-        
-        # Add sparse vector column and index if enabled
-        if self.include_sparse:
-            self._create_sparse_vector_column_and_index()
-
-    def _normalize(self, vector: List[float]) -> List[float]:
-        """Normalize vector using L2 normalization."""
-        import numpy as np
-        arr = np.array(vector)
-        norm = np.linalg.norm(arr)
-        if norm == 0:
-            return vector
-        arr = arr / norm
-        return arr.tolist()
+        logger.debug("DEBUG: Table '%s' created successfully with baseline schema (020: dense vector + fulltext)", self.collection_name)
+        # Note: Sparse vector support (030) will be added by Alembic migration if needed
 
     def _get_distance_function(self, metric_type: str):
         """Get the appropriate distance function for the given metric type."""
@@ -329,20 +317,6 @@ class OceanBaseVectorStore(VectorStoreBase):
     def _create_col(self):
         """Create a new collection."""
         
-        # Schema版本检测和自动升级
-        from .schema_version import check_and_upgrade_schema
-        
-        if not check_and_upgrade_schema(
-            self.obvector, 
-            self.collection_name, 
-            self.include_sparse,
-            self.embedding_model_dims,
-            self.connection_args
-        ):
-            raise RuntimeError(
-                "Failed to upgrade schema. Please check logs for details."
-            )
-
         if self.embedding_model_dims is None:
             raise ValueError(
                 "embedding_model_dims is required for OceanBase vector operations. "
@@ -357,10 +331,37 @@ class OceanBaseVectorStore(VectorStoreBase):
 
         # Only create table if it doesn't exist (preserve existing data)
         if not self.obvector.check_table_exists(self.collection_name):
+            # New table: create baseline schema then upgrade
             self._create_table_with_index_by_embedding_model_dims()
-            logger.info(f"Created new table {self.collection_name}")
+            logger.info(f"Created new table {self.collection_name} with baseline schema (020)")
+            
+            # For new tables, immediately run Alembic upgrade to add latest features (e.g., sparse vector)
+            if self.include_sparse:
+                logger.info("Running Alembic upgrade to add sparse vector support (030)...")
+                if not check_and_upgrade_schema(
+                    self.obvector, self.collection_name, 
+                    self.embedding_model_dims, self.include_sparse, self.connection_args
+                ):
+                    logger.warning("Failed to upgrade to sparse vector support, sparse will be disabled")
+                    self.include_sparse = False
+                else:
+                    logger.info("Successfully upgraded new table to include sparse vector support")
         else:
+            # Existing table: upgrade schema first, then validate
             logger.info(f"Table {self.collection_name} already exists, preserving existing data")
+            
+            # Auto-upgrade existing table schema if needed
+            if not check_and_upgrade_schema(
+                self.obvector, 
+                self.collection_name, 
+                self.embedding_model_dims,
+                self.include_sparse,
+                self.connection_args
+            ):
+                raise RuntimeError(
+                    "Failed to upgrade schema. Please check logs for details."
+                )
+            
             # Check if the existing table's vector dimension matches the requested dimension
             existing_dim = self._get_existing_vector_dimension()
             if existing_dim is not None and existing_dim != self.embedding_model_dims:
@@ -373,18 +374,18 @@ class OceanBaseVectorStore(VectorStoreBase):
         if self.hybrid_search:
             self._check_and_create_fulltext_index()
         
-        # Check and create sparse vector column/index if enabled
+        # Validate sparse vector support if enabled (should be added by Alembic migration)
         if self.include_sparse:
-            self._check_and_create_sparse_vector_column_and_index()
+            self._validate_sparse_vector_support()
         
-        # 使用ORM模型创建表对象（支持autogenerate）
         self.model_class = create_memory_model(
-            self.collection_name,
-            self.embedding_model_dims,
-            self.include_sparse
+            table_name=self.collection_name,
+            embedding_dims=self.embedding_model_dims,
+            include_sparse=self.include_sparse
         )
-        # 保持向后兼容：self.table仍可用于原有的SQLAlchemy操作
-        self.table = Table(self.collection_name, self.obvector.metadata_obj, autoload_with=self.obvector.engine)
+        
+        # 使用 model_class.__table__ 作为表引用
+        self.table = self.model_class.__table__
 
     def insert(self,
                vectors: List[List[float]],
@@ -420,13 +421,10 @@ class OceanBaseVectorStore(VectorStoreBase):
                 data.append(record)
 
             # Use transaction to ensure atomicity of insert
-            table = Table(self.collection_name, self.obvector.metadata_obj, 
-                         autoload_with=self.obvector.engine)
-            
             with self.obvector.engine.connect() as conn:
                 with conn.begin():
                     # Execute REPLACE INTO (upsert) statement
-                    upsert_stmt = ReplaceStmt(table).values(data)
+                    upsert_stmt = ReplaceStmt(self.table).values(data)
                     conn.execute(upsert_stmt)
             
             logger.debug(f"Successfully inserted {len(vectors)} vectors, generated Snowflake IDs: {generated_ids}")
@@ -435,34 +433,6 @@ class OceanBaseVectorStore(VectorStoreBase):
         except Exception as e:
             logger.error(f"Failed to insert vectors into collection '{self.collection_name}': {e}", exc_info=True)
             raise
-
-    def _parse_metadata(self, metadata_json):
-        """
-        Parse metadata from OceanBase.
-        
-        SQLAlchemy's JSON type automatically deserializes to dict, but this method
-        handles backward compatibility with legacy string-serialized data.
-        """
-        if isinstance(metadata_json, dict):
-            # SQLAlchemy JSON type returns dict directly (preferred path)
-            return metadata_json
-        elif isinstance(metadata_json, str):
-            # Legacy compatibility: handle manually serialized strings
-            try:
-                # First attempt to parse
-                metadata = json.loads(metadata_json)
-                # Check if it's still a string (double encoded - legacy bug)
-                if isinstance(metadata, str):
-                    try:
-                        # Second attempt to parse
-                        metadata = json.loads(metadata)
-                    except json.JSONDecodeError:
-                        metadata = {}
-                return metadata
-            except json.JSONDecodeError:
-                return {}
-        else:
-            return {}
 
     def _generate_where_clause(self, filters: Optional[Dict] = None) -> Optional[List]:
         """
@@ -567,10 +537,26 @@ class OceanBaseVectorStore(VectorStoreBase):
         result = process_condition(filters)
         return [result] if result is not None else None
 
-    def _parse_row(self, row) -> tuple:
-        """Parse a database result row. Returns up to 13 fields, padding with None if needed."""
-        padded_row = list(row) + [None] * (13 - len(row))
-        return tuple(padded_row[:13])
+    def _row_to_model(self, row):
+        """
+        将 SQLAlchemy Row 对象转换为 ORM Model 实例。
+        
+        Args:
+            row: SQLAlchemy Row 对象（查询结果）
+        
+        Returns:
+            Model 实例，可以通过属性访问字段（record.document, record.id 等）
+        """
+        # 创建一个新的 Model 实例（未绑定到 Session）
+        record = self.model_class()
+        
+        # 遍历表的所有列，将 Row 中的值映射到 Model 实例
+        for col_name in self.model_class.__table__.c.keys():
+            # 检查 Row 中是否包含该列（因为查询可能不包含所有列）
+            if col_name in row.keys():
+                setattr(record, col_name, row[col_name])
+        
+        return record
 
     def _get_standard_select_columns(self) -> List:
         """
@@ -627,33 +613,10 @@ class OceanBaseVectorStore(VectorStoreBase):
         
         return column_names
 
-    def _build_standard_metadata(self, user_id: str, agent_id: str, run_id: str,
-                                 actor_id: str, hash_val: str, created_at: str,
-                                 updated_at: str, category: str, metadata_json: str) -> Dict:
-        """Build standard metadata dictionary from row fields."""
-        # Parse the JSON metadata first - this contains user-defined metadata
-        user_metadata = self._parse_metadata(metadata_json)
-        
-        # Build complete payload with standard fields at top level and user metadata nested
-        metadata = {
-            "user_id": user_id,
-            "agent_id": agent_id,
-            "run_id": run_id,
-            "actor_id": actor_id,
-            "hash": hash_val,
-            "created_at": created_at,
-            "updated_at": updated_at,
-            "category": category,
-            # Store user metadata as nested structure to preserve it
-            "metadata": user_metadata
-        }
-
-        return metadata
-
     def _parse_row_to_dict(self, row, include_vector: bool = False, extract_score: bool = True) -> Dict:
         """
         Parse a database row and return all fields as a dictionary.
-        This unified method replaces the previous three separate methods.
+        Now uses ORM Model instance internally for cleaner field access.
         
         Args:
             row: Database row result
@@ -671,35 +634,55 @@ class OceanBaseVectorStore(VectorStoreBase):
             - metadata: Built metadata dictionary with sparse_embedding if available
             - score_or_distance: Score or distance value (only if extract_score=True)
         """
-        parsed = self._parse_row(row)
+        record = self._row_to_model(row)
+        
+        text_content = record.document
+        metadata_json = record.metadata_
+        vector_id = record.id
+        user_id = record.user_id
+        agent_id = record.agent_id
+        run_id = record.run_id
+        actor_id = record.actor_id
+        hash_val = record.hash
+        created_at = record.created_at
+        updated_at = record.updated_at
+        category = record.category
+        
+        # 处理可选字段
+        vector = None
+        sparse_embedding = None
+        score_or_distance = None
         
         if include_vector:
-            (text_content, vector, metadata_json, vector_id, user_id, agent_id, run_id,
-             actor_id, hash_val, created_at, updated_at, category) = parsed[:12]
-            
-            # Extract sparse_embedding if enabled
-            sparse_embedding = parsed[12] if self.include_sparse else None
-            score_or_distance = None
+            # get/list 场景：包含 vector 字段
+            vector = record.embedding
+            if self.include_sparse and hasattr(record, 'sparse_embedding') and record.sparse_embedding is not None:
+                sparse_embedding = record.sparse_embedding
         else:
-            # For search methods: text_content, metadata_json, vector_id, ...
-            (text_content, metadata_json, vector_id, user_id, agent_id, run_id,
-             actor_id, hash_val, created_at, updated_at, category) = parsed[:11]
-            
-            vector = None
-            
-            # Extract sparse_embedding and score/distance based on include_sparse flag
-            if self.include_sparse:
-                sparse_embedding = parsed[11]
-                score_or_distance = parsed[12] if extract_score else None
-            else:
-                sparse_embedding = None
-                score_or_distance = parsed[11] if extract_score else None
+            # 搜索场景：不包含 vector，但可能包含 sparse_embedding
+            if self.include_sparse and hasattr(record, 'sparse_embedding') and record.sparse_embedding is not None:
+                sparse_embedding = record.sparse_embedding
+        
+        # 提取额外的 score/distance 字段（这些字段不在 Model 中，需要从原始 row 获取）
+        if extract_score:
+            if 'score' in row.keys():
+                score_or_distance = row['score']
+            elif 'distance' in row.keys():
+                score_or_distance = row['distance']
         
         # Build standard metadata
-        metadata = self._build_standard_metadata(
-            user_id, agent_id, run_id, actor_id, hash_val,
-            created_at, updated_at, category, metadata_json
-        )
+        metadata = {
+            "user_id": user_id,
+            "agent_id": agent_id,
+            "run_id": run_id,
+            "actor_id": actor_id,
+            "hash": hash_val,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "category": category,
+            # Store user metadata as nested structure to preserve it
+            "metadata": OceanBaseUtil.parse_metadata(metadata_json)
+        }
         
         # Add sparse_embedding to metadata if it exists
         if sparse_embedding is not None:
@@ -754,7 +737,7 @@ class OceanBaseVectorStore(VectorStoreBase):
         record = {
             # Primary key (id) will be set explicitly in insert() method with Snowflake ID
             self.vector_field: (
-                vector if not self.normalize else self._normalize(vector)
+                vector if not self.normalize else OceanBaseUtil.normalize(vector)
             ),
             self.text_field: payload.get("data", ""),
             self.metadata_field: serialized_metadata,
@@ -823,7 +806,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             # Perform vector search - pyobvector expects a single vector, not a list of vectors
             results = self.obvector.ann_search(
                 table_name=self.collection_name,
-                vec_data=query_vector if not self.normalize else self._normalize(query_vector),
+                vec_data=query_vector if not self.normalize else OceanBaseUtil.normalize(query_vector),
                 vec_column_name=self.vector_field,
                 distance_func=self._get_distance_function(self.vidx_metric_type),
                 with_dist=True,
@@ -1460,7 +1443,7 @@ class OceanBaseVectorStore(VectorStoreBase):
 
             if vector is not None:
                 update_data[self.vector_field] = (
-                    vector if not self.normalize else self._normalize(vector)
+                    vector if not self.normalize else OceanBaseUtil.normalize(vector)
                 )
             else:
                 # Preserve the existing vector to avoid it being cleared by upsert
@@ -1632,25 +1615,82 @@ class OceanBaseVectorStore(VectorStoreBase):
             raise
 
     def reset(self):
-        """Reset by deleting the collection and recreating it."""
+        """
+        Reset collection by deleting and recreating it with baseline schema (020).
+        
+        Note: After reset, the table will be at baseline version (020: dense vector + fulltext).
+        If you need sparse vector support (030), please reinitialize OceanBaseVectorStore
+        with include_sparse=True, which will automatically run Alembic upgrade.
+        """
         try:
             logger.info(f"Resetting collection '{self.collection_name}'")
             self.delete_col()
+            
             if self.embedding_model_dims is not None:
+                # Create baseline table (020: dense vector + fulltext only)
                 self._create_table_with_index_by_embedding_model_dims()
 
             if self.hybrid_search:
                 self._check_and_create_fulltext_index()
             
-            # Check and create sparse vector column/index if enabled
-            if self.include_sparse:
-                self._check_and_create_sparse_vector_column_and_index()
-                
-            logger.info(f"Successfully reset collection '{self.collection_name}'")
+            # Note: Sparse vector support is NOT created in reset()
+            # Users should reinitialize OceanBaseVectorStore to get upgraded features
+            
+            logger.info(
+                f"Successfully reset collection '{self.collection_name}' to baseline schema (020). "
+            )
             
         except Exception as e:
             logger.error(f"Failed to reset collection '{self.collection_name}': {e}", exc_info=True)
             raise
+
+    def _validate_sparse_vector_support(self):
+        """
+        Validate sparse vector support (without creating anything).
+        
+        This method only checks if sparse vector features are available.
+        It's called after Alembic upgrade in _create_col() to validate that:
+        1. Database version supports sparse vector
+        2. sparse_embedding column exists (should be added by Alembic 030)
+        3. sparse_embedding_idx exists
+        
+        If any check fails, sparse support is automatically disabled with a warning.
+        """
+        # Check if database version supports sparse vector
+        if not OceanBaseUtil.check_sparse_vector_version_support(self.obvector):
+            logger.warning(
+                "Database version does not support sparse vector. "
+                "Sparse vector requires seekdb or OceanBase >= 4.5.0. "
+                "Disabling sparse vector support."
+            )
+            self.include_sparse = False
+            return
+
+        # Check if sparse_embedding column exists
+        if not OceanBaseUtil.check_sparse_vector_column_exists(
+            self.obvector, self.collection_name, self.sparse_vector_field
+        ):
+            logger.warning(
+                f"Table '{self.collection_name}' does not have sparse_embedding column. "
+                f"This should have been added by Alembic migration (030_add_sparse_vector). "
+                f"Disabling sparse vector support."
+            )
+            self.include_sparse = False
+            return
+        
+        # Check if sparse vector index exists
+        if not OceanBaseUtil.check_sparse_vector_index_exists(
+            self.obvector, self.collection_name
+        ):
+            logger.warning(
+                f"Table '{self.collection_name}' is missing sparse vector index. "
+                f"This should have been created by Alembic migration (030_add_sparse_vector). "
+                f"Disabling sparse vector support."
+            )
+            self.include_sparse = False
+            return
+        
+        logger.info(f"Sparse vector support validated successfully for table '{self.collection_name}'")
 
     def _check_and_create_fulltext_index(self):
         # Check whether the full-text index exists, if not, create it
@@ -1685,98 +1725,6 @@ class OceanBaseVectorStore(VectorStoreBase):
 
         # Refresh metadata
         self.obvector.refresh_metadata([self.collection_name])
-    
-    def _check_and_create_sparse_vector_column_and_index(self):
-        """Check and create sparse vector column and index if they don't exist."""
-        # First check if version supports sparse vector
-        if not OceanBaseUtil.check_sparse_vector_version_support(self.obvector):
-            logger.warning(
-                "Database version does not support sparse vector. "
-                "Sparse vector requires seekdb or OceanBase >= 4.5.0"
-            )
-            self.include_sparse = False
-            return
-
-        if not OceanBaseUtil.check_sparse_vector_column_exists(
-            self.obvector, self.collection_name, self.sparse_vector_field
-        ):
-            self._create_sparse_vector_column_and_index()
-        elif not OceanBaseUtil.check_sparse_vector_index_exists(
-            self.obvector, self.collection_name
-        ):
-            self._create_sparse_vector_index()
-
-    def _create_sparse_vector_column_and_index(self):
-        """Create sparse vector column and index."""
-        # First check if version supports sparse vector
-        if not OceanBaseUtil.check_sparse_vector_version_support(self.obvector):
-            logger.warning(
-                "Database version does not support sparse vector. "
-                "Sparse vector requires seekdb or OceanBase >= 4.5.0"
-            )
-            self.include_sparse = False
-            return
-
-        try:
-            logger.debug(
-                "About to create sparse vector column and index for collection '%s'",
-                self.collection_name,
-            )
-            
-            with self.obvector.engine.connect() as conn:
-                # First, add the sparse vector column if it doesn't exist
-                if not OceanBaseUtil.check_sparse_vector_column_exists(
-                    self.obvector, self.collection_name, self.sparse_vector_field
-                ):
-                    alter_table_sql = text(
-                        f"ALTER TABLE {self.collection_name} "
-                        f"ADD COLUMN {self.sparse_vector_field} SPARSEVECTOR"
-                    )
-                    logger.debug("DEBUG: Executing SQL: %s", alter_table_sql)
-                    conn.execute(alter_table_sql)
-                    conn.commit()
-                    logger.debug("DEBUG: Sparse vector column created successfully for '%s'", self.collection_name)
-                
-                # Then, create the sparse vector index
-                if not OceanBaseUtil.check_sparse_vector_index_exists(
-                    self.obvector, self.collection_name
-                ):
-                    self._create_sparse_vector_index()
-                    
-        except Exception as e:
-            logger.exception("Exception occurred while creating sparse vector column and index")
-            raise Exception(
-                "Failed to add sparse vector column and index to the target table, "
-                "your OceanBase version must support SPARSEVECTOR type and sparse vector index"
-            ) from e
-        
-        # Refresh metadata
-        self.obvector.refresh_metadata([self.collection_name])
-    
-    def _create_sparse_vector_index(self):
-        """Create sparse vector index."""
-        try:
-            logger.debug(
-                "About to create sparse vector index for collection '%s'",
-                self.collection_name,
-            )
-            
-            with self.obvector.engine.connect() as conn:
-                create_index_sql = text(
-                    f"CREATE VECTOR INDEX sparse_embedding_idx ON {self.collection_name}({self.sparse_vector_field}) "
-                    f"WITH (lib=vsag, type=sindi, distance=inner_product)"
-                )
-                logger.debug("DEBUG: Executing SQL: %s", create_index_sql)
-                conn.execute(create_index_sql)
-                conn.commit()
-                logger.debug("DEBUG: Sparse vector index created successfully for '%s'", self.collection_name)
-                
-        except Exception as e:
-            logger.exception("Exception occurred while creating sparse vector index")
-            raise Exception(
-                "Failed to create sparse vector index, "
-                "your OceanBase version must support sparse vector index"
-            ) from e
     
     def execute_sql(self, sql: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """

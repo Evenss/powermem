@@ -3,10 +3,10 @@ OceanBase utility functions
 
 This module provides utility functions for checking OceanBase database information.
 """
-
+import json
 import logging
 import re
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 try:
     from sqlalchemy import text
@@ -294,3 +294,43 @@ class OceanBaseUtil:
             return "{}"
         formatted = "{" + ", ".join(f"{k}:{v}" for k, v in sparse_dict.items()) + "}"
         return formatted
+
+    @staticmethod
+    def normalize(vector: List[float]) -> List[float]:
+        """Normalize vector using L2 normalization."""
+        import numpy as np
+        arr = np.array(vector)
+        norm = np.linalg.norm(arr)
+        if norm == 0:
+            return vector
+        arr = arr / norm
+        return arr.tolist()
+
+    @staticmethod
+    def parse_metadata(metadata_json):
+        """
+        Parse metadata from OceanBase.
+
+        SQLAlchemy's JSON type automatically deserializes to dict, but this method
+        handles backward compatibility with legacy string-serialized data.
+        """
+        if isinstance(metadata_json, dict):
+            # SQLAlchemy JSON type returns dict directly (preferred path)
+            return metadata_json
+        elif isinstance(metadata_json, str):
+            # Legacy compatibility: handle manually serialized strings
+            try:
+                # First attempt to parse
+                metadata = json.loads(metadata_json)
+                # Check if it's still a string (double encoded - legacy bug)
+                if isinstance(metadata, str):
+                    try:
+                        # Second attempt to parse
+                        metadata = json.loads(metadata)
+                    except json.JSONDecodeError:
+                        metadata = {}
+                return metadata
+            except json.JSONDecodeError:
+                return {}
+        else:
+            return {}
