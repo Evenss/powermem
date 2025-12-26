@@ -35,7 +35,6 @@ except ImportError as e:
 
 from powermem.storage.oceanbase import constants
 from .models import create_memory_model
-from .schema_version import check_and_upgrade_schema
 
 logger = logging.getLogger(__name__)
 
@@ -228,7 +227,11 @@ class OceanBaseVectorStore(VectorStoreBase):
             logger.warning("   Vector index functionality may not work properly")
 
     def _create_table_with_index_by_embedding_model_dims(self) -> None:
-        """Create table with vector index based on embedding dimension."""
+        """Create table with vector index based on embedding dimension.
+        
+        If include_sparse is True and database supports sparse vector,
+        the sparse_embedding column will be included in the table schema.
+        """
         cols = [
             # Primary key - Snowflake ID (BIGINT without AUTO_INCREMENT)
             Column(self.primary_field, BigInteger, primary_key=True, autoincrement=False),
@@ -249,11 +252,10 @@ class OceanBaseVectorStore(VectorStoreBase):
             Column(self.fulltext_field, LONGTEXT)
         ]
 
-        # Add hybrid search columns if enabled
-        # Note: sparse_embedding column will be added via ALTER TABLE after table creation
-
-        # Create vector index
+        # Create vector index parameters
         vidx_params = self.obvector.prepare_index_params()
+        
+        # Add dense vector index
         vidx_params.add_index(
             field_name=self.vector_field,
             index_type=constants.OCEANBASE_SUPPORTED_VECTOR_INDEX_TYPES[self.index_type],
@@ -262,7 +264,26 @@ class OceanBaseVectorStore(VectorStoreBase):
             params=self.vidx_algo_params,
         )
 
-        # Create table with vector index first
+        if self.include_sparse:
+            if OceanBaseUtil.check_sparse_vector_version_support(self.obvector):
+                cols.append(Column(self.sparse_vector_field, SPARSE_VECTOR))
+                logger.info(f"Including sparse_embedding column in new table '{self.collection_name}'")
+                vidx_params.add_index(
+                    field_name=self.sparse_vector_field,
+                    index_type="daat",
+                    index_name="sparse_embedding_idx",
+                    metric_type="inner_product",
+                    sparse_index_type="sindi",  # use sindi index type
+                )
+                logger.debug(f"Added sparse vector index configuration for table '{self.collection_name}'")
+            else:
+                logger.warning(
+                    "Database does not support SPARSE_VECTOR type. "
+                    "Creating table without sparse vector support. "
+                    "Upgrade to seekdb or OceanBase >= 4.5.0 for sparse vector."
+                )
+        
+        # Create table with vector indexes (both dense and sparse if configured)
         self.obvector.create_table_with_index_params(
             table_name=self.collection_name,
             columns=cols,
@@ -271,8 +292,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             partitions=None,
         )
 
-        logger.debug("DEBUG: Table '%s' created successfully with baseline schema (020: dense vector + fulltext)", self.collection_name)
-        # Note: Sparse vector support (030) will be added by Alembic migration if needed
+        logger.debug(f"Table '{self.collection_name}' created successfully")
 
     def _get_distance_function(self, metric_type: str):
         """Get the appropriate distance function for the given metric type."""
@@ -331,36 +351,12 @@ class OceanBaseVectorStore(VectorStoreBase):
 
         # Only create table if it doesn't exist (preserve existing data)
         if not self.obvector.check_table_exists(self.collection_name):
-            # New table: create baseline schema then upgrade
+            # New table: create with full schema (including sparse_embedding if enabled)
             self._create_table_with_index_by_embedding_model_dims()
-            logger.info(f"Created new table {self.collection_name} with baseline schema (020)")
-            
-            # For new tables, immediately run Alembic upgrade to add latest features (e.g., sparse vector)
-            if self.include_sparse:
-                logger.info("Running Alembic upgrade to add sparse vector support (030)...")
-                if not check_and_upgrade_schema(
-                    self.obvector, self.collection_name, 
-                    self.embedding_model_dims, self.include_sparse, self.connection_args
-                ):
-                    logger.warning("Failed to upgrade to sparse vector support, sparse will be disabled")
-                    self.include_sparse = False
-                else:
-                    logger.info("Successfully upgraded new table to include sparse vector support")
+            logger.info(f"Created new table {self.collection_name}")
         else:
-            # Existing table: upgrade schema first, then validate
+            # Existing table: validate schema
             logger.info(f"Table {self.collection_name} already exists, preserving existing data")
-            
-            # Auto-upgrade existing table schema if needed
-            if not check_and_upgrade_schema(
-                self.obvector, 
-                self.collection_name, 
-                self.embedding_model_dims,
-                self.include_sparse,
-                self.connection_args
-            ):
-                raise RuntimeError(
-                    "Failed to upgrade schema. Please check logs for details."
-                )
             
             # Check if the existing table's vector dimension matches the requested dimension
             existing_dim = self._get_existing_vector_dimension()
@@ -374,14 +370,20 @@ class OceanBaseVectorStore(VectorStoreBase):
         if self.hybrid_search:
             self._check_and_create_fulltext_index()
         
-        # Validate sparse vector support if enabled (should be added by Alembic migration)
+        # Validate sparse vector support if enabled
         if self.include_sparse:
             self._validate_sparse_vector_support()
         
         self.model_class = create_memory_model(
             table_name=self.collection_name,
             embedding_dims=self.embedding_model_dims,
-            include_sparse=self.include_sparse
+            include_sparse=self.include_sparse,
+            primary_field=self.primary_field,
+            vector_field=self.vector_field,
+            text_field=self.text_field,
+            metadata_field=self.metadata_field,
+            fulltext_field=self.fulltext_field,
+            sparse_vector_field=self.sparse_vector_field
         )
         
         # 使用 model_class.__table__ 作为表引用
@@ -1616,11 +1618,14 @@ class OceanBaseVectorStore(VectorStoreBase):
 
     def reset(self):
         """
-        Reset collection by deleting and recreating it with baseline schema (020).
+        Reset collection by deleting and recreating it.
         
-        Note: After reset, the table will be at baseline version (020: dense vector + fulltext).
-        If you need sparse vector support (030), please reinitialize OceanBaseVectorStore
-        with include_sparse=True, which will automatically run Alembic upgrade.
+        Note: After reset, the table will be recreated with the current configuration.
+        If include_sparse=True and database supports it, sparse vector will be included.
+        For existing tables that need sparse vector support, use the upgrade script:
+        
+            from scripts.upgrade_sparse_vector import upgrade_sparse_vector
+            upgrade_sparse_vector(memory)
         """
         try:
             logger.info(f"Resetting collection '{self.collection_name}'")
@@ -1648,47 +1653,51 @@ class OceanBaseVectorStore(VectorStoreBase):
         """
         Validate sparse vector support (without creating anything).
         
-        This method only checks if sparse vector features are available.
-        It's called after Alembic upgrade in _create_col() to validate that:
+        This method checks if sparse vector features are available:
         1. Database version supports sparse vector
-        2. sparse_embedding column exists (should be added by Alembic 030)
+        2. sparse_embedding column exists
         3. sparse_embedding_idx exists
         
-        If any check fails, sparse support is automatically disabled with a warning.
+        If any check fails, a RuntimeError is raised with instructions to run the upgrade script.
+        
+        Raises:
+            RuntimeError: If sparse vector support is not available or not configured.
         """
         # Check if database version supports sparse vector
         if not OceanBaseUtil.check_sparse_vector_version_support(self.obvector):
-            logger.warning(
+            raise RuntimeError(
                 "Database version does not support sparse vector. "
                 "Sparse vector requires seekdb or OceanBase >= 4.5.0. "
-                "Disabling sparse vector support."
+                "Please upgrade your database or set include_sparse=False."
             )
-            self.include_sparse = False
-            return
 
         # Check if sparse_embedding column exists
         if not OceanBaseUtil.check_sparse_vector_column_exists(
             self.obvector, self.collection_name, self.sparse_vector_field
         ):
-            logger.warning(
+            raise RuntimeError(
                 f"Table '{self.collection_name}' does not have sparse_embedding column. "
-                f"This should have been added by Alembic migration (030_add_sparse_vector). "
-                f"Disabling sparse vector support."
+                f"Please run the upgrade script first:\n"
+                f"  from powermem import Memory\n"
+                f"  from scripts.upgrade_sparse_vector import upgrade_sparse_vector\n"
+                f"  memory = Memory(config={{...}}, include_sparse=False)  # init without sparse\n"
+                f"  upgrade_sparse_vector(memory)  # upgrade table\n"
+                f"Or set include_sparse=False to disable sparse vector support."
             )
-            self.include_sparse = False
-            return
         
         # Check if sparse vector index exists
         if not OceanBaseUtil.check_sparse_vector_index_exists(
             self.obvector, self.collection_name
         ):
-            logger.warning(
+            raise RuntimeError(
                 f"Table '{self.collection_name}' is missing sparse vector index. "
-                f"This should have been created by Alembic migration (030_add_sparse_vector). "
-                f"Disabling sparse vector support."
+                f"Please run the upgrade script first:\n"
+                f"  from powermem import Memory\n"
+                f"  from scripts.upgrade_sparse_vector import upgrade_sparse_vector\n"
+                f"  memory = Memory(config={{...}}, include_sparse=False)  # init without sparse\n"
+                f"  upgrade_sparse_vector(memory)  # upgrade table\n"
+                f"Or set include_sparse=False to disable sparse vector support."
             )
-            self.include_sparse = False
-            return
         
         logger.info(f"Sparse vector support validated successfully for table '{self.collection_name}'")
 
