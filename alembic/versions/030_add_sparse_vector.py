@@ -113,22 +113,36 @@ def upgrade() -> None:
     
     if not has_sparse_column:
         logger.info(f"Adding sparse_embedding column to table '{table_name}'")
-        op.add_column(
-            table_name,
-            Column('sparse_embedding', SPARSE_VECTOR, nullable=True)
-        )
-        logger.info("sparse_embedding column added successfully")
+        try:
+            op.add_column(
+                table_name,
+                Column('sparse_embedding', SPARSE_VECTOR, nullable=True)
+            )
+            logger.info("sparse_embedding column added successfully")
+        except Exception as e:
+            error_str = str(e).lower()
+            if '1060' in str(e) or 'already exists' in error_str or 'duplicate column' in error_str:
+                logger.info(f"sparse_embedding column already exists (created by another instance), skipping")
+            else:
+                raise
     else:
         logger.info("sparse_embedding column already exists (checked via ORM/Inspector or SQL), skipping")
     
     # 2. 创建稀疏向量索引（OceanBase特殊语法，使用op.execute）
     if not OceanBaseUtil.check_index_exists(obvector, table_name, 'sparse_embedding_idx'):
         logger.info(f"Creating sparse vector index on table '{table_name}'")
-        op.execute(
-            f"CREATE VECTOR INDEX sparse_embedding_idx ON {table_name}(sparse_embedding) "
-            f"WITH (lib=vsag, type=sindi, distance=inner_product)"
-        )
-        logger.info("sparse_embedding_idx created successfully")
+        try:
+            op.execute(
+                f"CREATE VECTOR INDEX sparse_embedding_idx ON {table_name}(sparse_embedding) "
+                f"WITH (lib=vsag, type=sindi, distance=inner_product)"
+            )
+            logger.info("sparse_embedding_idx created successfully")
+        except Exception as e:
+            error_str = str(e).lower()
+            if '1061' in str(e) or 'already exists' in error_str or 'duplicate key' in error_str:
+                logger.info(f"sparse_embedding_idx already exists (created by another instance), skipping")
+            else:
+                raise
     else:
         logger.info("sparse_embedding_idx already exists, skipping")
     
@@ -156,16 +170,30 @@ def downgrade() -> None:
     # 1. 删除稀疏向量索引（使用op.execute因为是特殊索引类型）
     if OceanBaseUtil.check_index_exists(obvector, table_name, 'sparse_embedding_idx'):
         logger.info(f"Dropping sparse vector index from table '{table_name}'")
-        op.execute(f"DROP INDEX sparse_embedding_idx ON {table_name}")
-        logger.info("sparse_embedding_idx dropped successfully")
+        try:
+            op.execute(f"DROP INDEX sparse_embedding_idx ON {table_name}")
+            logger.info("sparse_embedding_idx dropped successfully")
+        except Exception as e:
+            error_str = str(e).lower()
+            if '1091' in str(e) or "doesn't exist" in error_str or 'check that column/key exists' in error_str:
+                logger.info(f"sparse_embedding_idx does not exist (already dropped by another instance), skipping")
+            else:
+                raise
     else:
         logger.info("sparse_embedding_idx does not exist, skipping")
     
     # 2. 删除 sparse_embedding 列（使用Alembic标准操作）
     if OceanBaseUtil.check_column_exists(obvector, table_name, 'sparse_embedding'):
         logger.info(f"Dropping sparse_embedding column from table '{table_name}'")
-        op.drop_column(table_name, 'sparse_embedding')
-        logger.info("sparse_embedding column dropped successfully")
+        try:
+            op.drop_column(table_name, 'sparse_embedding')
+            logger.info("sparse_embedding column dropped successfully")
+        except Exception as e:
+            error_str = str(e).lower()
+            if '1091' in str(e) or "doesn't exist" in error_str or 'check that column/key exists' in error_str:
+                logger.info(f"sparse_embedding column does not exist (already dropped by another instance), skipping")
+            else:
+                raise
     else:
         logger.info("sparse_embedding column does not exist, skipping")
     

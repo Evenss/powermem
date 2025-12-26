@@ -230,7 +230,12 @@ class OceanBaseUtil:
 
                 version_str = str(version_str).strip()
                 # Parse version string
-                version_match = re.search(r'[vV]?(\d+)\.(\d+)\.(\d+)', version_str)
+                # For OceanBase, prioritize the actual OceanBase version (e.g., "5.7.25-OceanBase_CE-v4.3.5.5" -> 4.3.5)
+                # First try to match OceanBase version pattern
+                version_match = re.search(r'OceanBase[^v]*[vV]?(\d+)\.(\d+)\.(\d+)', version_str)
+                if not version_match:
+                    version_match = re.search(r'[vV]?(\d+)\.(\d+)\.(\d+)', version_str)
+                
                 if version_match:
                     major = int(version_match.group(1))
                     minor = int(version_match.group(2))
