@@ -10,9 +10,10 @@ from typing import Dict, Optional, List
 
 try:
     from sqlalchemy import text
+    from pyobvector import FtsParser
 except ImportError as e:
     raise ImportError(
-        f"Required dependencies not found: {e}. Please install sqlalchemy."
+        f"Required dependencies not found: {e}. Please install sqlalchemy and pyobvector."
     )
 
 logger = logging.getLogger(__name__)
@@ -312,6 +313,38 @@ class OceanBaseUtil:
         return arr.tolist()
 
     @staticmethod
+    def get_fts_parser_enum(parser_name: str):
+        """Convert parser name string to FtsParser enum.
+        
+        Args:
+            parser_name: Parser name string (e.g., 'ik', 'ngram', 'ngram2', 'beng', 'space')
+            
+        Returns:
+            FtsParser enum value
+            
+        Raises:
+            ValueError: If parser name is not supported
+        """
+        parser_mapping = {
+            'ik': FtsParser.IK,
+            'ngram': FtsParser.NGRAM,
+            # pyobvector don't support
+            'ngram2': FtsParser.NGRAM,
+            'beng': FtsParser.NGRAM,
+            'space': FtsParser.NGRAM,
+        }
+        
+        parser_lower = parser_name.lower()
+        if parser_lower not in parser_mapping:
+            supported = ', '.join(parser_mapping.keys())
+            raise ValueError(
+                f"Unsupported fulltext parser: {parser_name}. "
+                f"Supported parsers are: {supported}"
+            )
+        
+        return parser_mapping[parser_lower]
+
+    @staticmethod
     def parse_metadata(metadata_json):
         """
         Parse metadata from OceanBase.
@@ -339,3 +372,46 @@ class OceanBaseUtil:
                 return {}
         else:
             return {}
+
+    @staticmethod
+    def validate_sparse_vector_support(obvector, collection_name: str, sparse_vector_field: str):
+        """
+        Validate sparse vector support (without creating anything).
+        
+        This method checks if sparse vector features are available:
+        1. Database version supports sparse vector
+        2. sparse_embedding column exists
+        3. sparse_embedding_idx exists
+        
+        If any check fails, a RuntimeError is raised with instructions to run the upgrade script.
+        
+        Args:
+            obvector: The ObVecClient instance.
+            collection_name: The name of the collection/table.
+            sparse_vector_field: The name of the sparse vector field.
+        
+        Raises:
+            RuntimeError: If sparse vector support is not available or not configured.
+        """
+        # Check if database version supports sparse vector
+        if not OceanBaseUtil.check_sparse_vector_version_support(obvector):
+            raise RuntimeError(
+                "Database version does not support sparse vector. "
+                "Sparse vector requires seekdb or OceanBase >= 4.5.0. "
+                "Please upgrade your database or set include_sparse=False."
+            )
+
+        # Check if sparse_embedding column or sparse_embedding_idx index exists
+        if not OceanBaseUtil.check_sparse_vector_column_exists(obvector, collection_name, sparse_vector_field) or \
+           not OceanBaseUtil.check_sparse_vector_index_exists(obvector, collection_name):
+            raise RuntimeError(
+                f"Table '{collection_name}' does not have sparse_embedding column or sparse_embedding_idx index. "
+                f"Please run the upgrade script first:\n"
+                f"  from powermem import Memory\n"
+                f"  from scripts.upgrade_sparse_vector import upgrade_sparse_vector\n"
+                f"  memory = Memory(config={{...}})\n"
+                f"  ScriptManager.run('upgrade-sparse-vector', memory)\n"
+                f"Or set include_sparse=False to disable sparse vector support."
+            )
+        
+        logger.info(f"Sparse vector support validated successfully for table '{collection_name}'")

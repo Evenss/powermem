@@ -102,7 +102,7 @@ DEFAULT_TEXT_FIELD = "document"
 
 # Supported fulltext parsers
 OCEANBASE_SUPPORTED_FULLTEXT_PARSERS = ["ik", "ngram", "ngram2", "beng", "space"]
-DEFAULT_FULLTEXT_PARSER = "ik"
+DEFAULT_FULLTEXT_PARSER = "ngram"
 
 
 # =============================================================================

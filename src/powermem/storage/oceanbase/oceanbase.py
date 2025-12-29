@@ -23,7 +23,9 @@ try:
         inner_product,
         l2_distance,
         VecIndexType,
-    )
+        FtsIndexParam,
+        FtsParser,
+)
     from pyobvector.schema import ReplaceStmt
     from sqlalchemy import JSON, Column, String, Table, func, ColumnElement, BigInteger
     from sqlalchemy import text, and_, or_, not_, select, bindparam, literal_column
@@ -264,6 +266,17 @@ class OceanBaseVectorStore(VectorStoreBase):
             params=self.vidx_algo_params,
         )
 
+        fts_index_param = None
+        if self.hybrid_search:
+            # Convert string parser name to FtsParser enum
+            parser_enum = OceanBaseUtil.get_fts_parser_enum(self.fulltext_parser)
+            fts_index_param = FtsIndexParam(
+                index_name=f"fulltext_index_for_col_text",
+                field_names=[self.fulltext_field],
+                parser_type=parser_enum,
+            )
+            logger.debug(f"Added fulltext index configuration with parser '{self.fulltext_parser}' for table '{self.collection_name}'")
+
         if self.include_sparse:
             if OceanBaseUtil.check_sparse_vector_version_support(self.obvector):
                 cols.append(Column(self.sparse_vector_field, SPARSE_VECTOR))
@@ -289,6 +302,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             columns=cols,
             indexes=None,
             vidxs=vidx_params,
+            fts_idxs=[fts_index_param] if fts_index_param is not None else None,
             partitions=None,
         )
 
@@ -372,7 +386,7 @@ class OceanBaseVectorStore(VectorStoreBase):
         
         # Validate sparse vector support if enabled
         if self.include_sparse:
-            self._validate_sparse_vector_support()
+            OceanBaseUtil.validate_sparse_vector_support(self.obvector, self.collection_name, self.sparse_vector_field)
         
         self.model_class = create_memory_model(
             table_name=self.collection_name,
@@ -1649,58 +1663,6 @@ class OceanBaseVectorStore(VectorStoreBase):
         except Exception as e:
             logger.error(f"Failed to reset collection '{self.collection_name}': {e}", exc_info=True)
             raise
-
-    def _validate_sparse_vector_support(self):
-        """
-        Validate sparse vector support (without creating anything).
-        
-        This method checks if sparse vector features are available:
-        1. Database version supports sparse vector
-        2. sparse_embedding column exists
-        3. sparse_embedding_idx exists
-        
-        If any check fails, a RuntimeError is raised with instructions to run the upgrade script.
-        
-        Raises:
-            RuntimeError: If sparse vector support is not available or not configured.
-        """
-        # Check if database version supports sparse vector
-        if not OceanBaseUtil.check_sparse_vector_version_support(self.obvector):
-            raise RuntimeError(
-                "Database version does not support sparse vector. "
-                "Sparse vector requires seekdb or OceanBase >= 4.5.0. "
-                "Please upgrade your database or set include_sparse=False."
-            )
-
-        # Check if sparse_embedding column exists
-        if not OceanBaseUtil.check_sparse_vector_column_exists(
-            self.obvector, self.collection_name, self.sparse_vector_field
-        ):
-            raise RuntimeError(
-                f"Table '{self.collection_name}' does not have sparse_embedding column. "
-                f"Please run the upgrade script first:\n"
-                f"  from powermem import Memory\n"
-                f"  from scripts.upgrade_sparse_vector import upgrade_sparse_vector\n"
-                f"  memory = Memory(config={{...}}, include_sparse=False)  # init without sparse\n"
-                f"  upgrade_sparse_vector(memory)  # upgrade table\n"
-                f"Or set include_sparse=False to disable sparse vector support."
-            )
-        
-        # Check if sparse vector index exists
-        if not OceanBaseUtil.check_sparse_vector_index_exists(
-            self.obvector, self.collection_name
-        ):
-            raise RuntimeError(
-                f"Table '{self.collection_name}' is missing sparse vector index. "
-                f"Please run the upgrade script first:\n"
-                f"  from powermem import Memory\n"
-                f"  from scripts.upgrade_sparse_vector import upgrade_sparse_vector\n"
-                f"  memory = Memory(config={{...}}, include_sparse=False)  # init without sparse\n"
-                f"  upgrade_sparse_vector(memory)  # upgrade table\n"
-                f"Or set include_sparse=False to disable sparse vector support."
-            )
-        
-        logger.info(f"Sparse vector support validated successfully for table '{self.collection_name}'")
 
     def _check_and_create_fulltext_index(self):
         # Check whether the full-text index exists, if not, create it
