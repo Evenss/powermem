@@ -2,19 +2,19 @@
 PowerMem Script Manager
 
 Provides Python API to manage and execute various maintenance and upgrade scripts.
-All script executions require an initialized Memory instance.
+All script executions require a configuration dictionary.
 
 Usage example:
-    from powermem import Memory
+    from powermem import auto_config
     from scripts.script_manager import ScriptManager
     
-    memory = Memory(config={...})
+    config = auto_config()
     
-    # List available scripts (no need to initialize)
+    # List available scripts
     ScriptManager.list_scripts()
     
-    # Execute upgrade script (no need to initialize)
-    success = ScriptManager.run('upgrade-sparse-vector', memory)
+    # Execute upgrade script
+    success = ScriptManager.run('upgrade-sparse-vector', config)
 """
 
 import importlib
@@ -107,9 +107,9 @@ class ScriptManager:
     @classmethod
     def _print_scripts(cls, scripts: Dict[str, Dict], categories: Dict[str, str]) -> None:
         """Print script list"""
-        print("\n" + "=" * 70)
-        print("PowerMem Available Scripts")
-        print("=" * 70)
+        logger.info("\n" + "=" * 70)
+        logger.info("PowerMem Available Scripts")
+        logger.info("=" * 70)
         
         # Organize scripts by category
         scripts_by_category: Dict[str, list] = {}
@@ -122,68 +122,61 @@ class ScriptManager:
         # Print scripts for each category
         for cat, script_list in sorted(scripts_by_category.items()):
             category_desc = categories.get(cat, cat)
-            print(f"\n【{category_desc}】")
-            print("-" * 70)
+            logger.info(f"\n【{category_desc}】")
+            logger.info("-" * 70)
             
             for script_name, script_info in sorted(script_list):
                 desc = script_info.get('description', 'No description')
                 destructive = script_info.get('destructive', False)
                 warning = " ⚠️  Destructive Operation" if destructive else ""
-                print(f"  • {script_name}{warning}")
-                print(f"    {desc}")
+                logger.info(f"  • {script_name}{warning}")
+                logger.info(f"    {desc}")
         
-        print("\n" + "=" * 70)
-        print("Usage: ScriptManager.run('script_name', memory_instance)")
-        print("=" * 70 + "\n")
+        logger.info("\n" + "=" * 70)
+        logger.info("Usage: ScriptManager.run('script_name', config)")
+        logger.info("=" * 70 + "\n")
     
     @classmethod
-    def run(cls, script_name: str, memory_instance: Any, **kwargs) -> bool:
+    def run(cls, script_name: str, config: Any, **kwargs) -> bool:
         """
         Execute the specified script
         
         Args:
             script_name: Script name
-            memory_instance: Initialized Memory or AsyncMemory instance
+            config: PowerMem configuration dictionary (dict or MemoryConfig)
             **kwargs: Additional parameters to pass to the script function
             
         Returns:
             bool: Returns True on success, False on failure
             
         Raises:
-            ValueError: If memory_instance is None or script does not exist
-            
-        Example:
-            >>> from powermem import Memory
-            >>> from scripts.script_manager import ScriptManager
-            >>> 
-            >>> memory = Memory(config={...})
-            >>> success = ScriptManager.run('upgrade-sparse-vector', memory)
+            ValueError: If config is None or script does not exist
         """
-        if memory_instance is None:
+        if config is None:
             raise ValueError(
-                "memory_instance parameter is required\n"
+                "config parameter is required\n"
                 "Example:\n"
-                "  from powermem import Memory\n"
+                "  from powermem import auto_config\n"
                 "  from scripts.script_manager import ScriptManager\n"
-                "  memory = Memory(config={{...}})\n"
-                "  ScriptManager.run('upgrade-sparse-vector', memory)"
+                "  config = auto_config()\n"
+                "  ScriptManager.run('upgrade-sparse-vector', config)"
             )
         
         try:
-            # Load config and get script information
-            config = cls._load_config()
-            script_info = cls._get_script_info(script_name, config)
+            # Load scripts configuration (not to be confused with memory config parameter)
+            scripts_config = cls._load_config()
+            script_info = cls._get_script_info(script_name, scripts_config)
             
             # Display script information
-            print(f"\nPreparing to execute script: {script_name}")
-            print(f"Description: {script_info.get('description', 'No description')}")
+            logger.info(f"\nPreparing to execute script: {script_name}")
+            logger.info(f"Description: {script_info.get('description', 'No description')}")
             
             # Check if it's a destructive operation
             if script_info.get('destructive', False):
-                print("\n⚠️  Warning: This is a destructive operation that may delete data!")
+                logger.warning("\n⚠️  Warning: This is a destructive operation that may delete data!")
                 confirm = input("Confirm to continue? (yes/no): ").strip().lower()
                 if confirm not in ['yes', 'y']:
-                    print("Operation cancelled")
+                    logger.info("Operation cancelled")
                     return False
             
             # Load script module and function
@@ -196,16 +189,16 @@ class ScriptManager:
             
             # Execute script
             logger.info(f"Executing script function: {function_name}")
-            result = script_func(memory_instance, **kwargs)
+            result = script_func(config, **kwargs)
             
             if result:
-                print(f"\n✓ Script '{script_name}' executed successfully!")
+                logger.info(f"\n✓ Script '{script_name}' executed successfully!")
             else:
-                print(f"\n✗ Script '{script_name}' execution failed")
+                logger.error(f"\n✗ Script '{script_name}' execution failed")
             
             return result
             
         except Exception as e:
             logger.error(f"Error occurred while executing script: {e}", exc_info=True)
-            print(f"\n✗ Error: {e}")
+            logger.error(f"\n✗ Error: {e}")
             return False

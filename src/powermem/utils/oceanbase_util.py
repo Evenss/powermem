@@ -407,10 +407,10 @@ class OceanBaseUtil:
             raise RuntimeError(
                 f"Table '{collection_name}' does not have sparse_embedding column or sparse_embedding_idx index. "
                 f"Please run the upgrade script first:\n"
-                f"  from powermem import Memory\n"
-                f"  from scripts.upgrade_sparse_vector import upgrade_sparse_vector\n"
-                f"  memory = Memory(config={{...}})\n"
-                f"  ScriptManager.run('upgrade-sparse-vector', memory)\n"
+                f"  from powermem import auto_config\n"
+                f"  from scripts.script_manager import ScriptManager\n"
+                f"  config = auto_config()\n"
+                f"  ScriptManager.run('upgrade-sparse-vector', config)\n"
                 f"Or set include_sparse=False to disable sparse vector support."
             )
         
