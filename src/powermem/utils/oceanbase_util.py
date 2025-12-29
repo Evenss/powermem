@@ -86,13 +86,13 @@ class OceanBaseUtil:
         Returns:
             True if the sparse vector column exists, False otherwise.
         """
-        # 使用通用的 check_column_exists 方法
+        # Use the generic check_column_exists method
         return OceanBaseUtil.check_column_exists(obvector, collection_name, sparse_vector_field)
 
     @staticmethod
     def check_index_exists(obvector, table_name: str, index_name: str) -> bool:
         """
-        Check if an index exists on a table (通用索引检查方法).
+        Check if an index exists on a table (generic index check method).
 
         Args:
             obvector: The ObVecClient instance.
@@ -127,7 +127,7 @@ class OceanBaseUtil:
         Returns:
             True if the sparse vector index exists, False otherwise.
         """
-        # 使用通用的 check_index_exists 方法
+        # Use the generic check_index_exists method
         return OceanBaseUtil.check_index_exists(obvector, collection_name, "sparse_embedding_idx")
 
     @staticmethod

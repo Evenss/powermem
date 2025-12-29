@@ -386,7 +386,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             sparse_vector_field=self.sparse_vector_field
         )
         
-        # 使用 model_class.__table__ 作为表引用
+        # Use model_class.__table__ as table reference
         self.table = self.model_class.__table__
 
     def insert(self,
@@ -541,20 +541,20 @@ class OceanBaseVectorStore(VectorStoreBase):
 
     def _row_to_model(self, row):
         """
-        将 SQLAlchemy Row 对象转换为 ORM Model 实例。
+        Convert SQLAlchemy Row object to ORM Model instance.
         
         Args:
-            row: SQLAlchemy Row 对象（查询结果）
+            row: SQLAlchemy Row object (query result)
         
         Returns:
-            Model 实例，可以通过属性访问字段（record.document, record.id 等）
+            Model instance, accessible via attributes (record.document, record.id, etc.)
         """
-        # 创建一个新的 Model 实例（未绑定到 Session）
+        # Create a new Model instance (not bound to Session)
         record = self.model_class()
         
-        # 遍历表的所有列，将 Row 中的值映射到 Model 实例
+        # Iterate through all columns in the table, map values from Row to Model instance
         for col_name in self.model_class.__table__.c.keys():
-            # 检查 Row 中是否包含该列（因为查询可能不包含所有列）
+            # Check if Row contains this column (queries may not include all columns)
             if col_name in row.keys():
                 setattr(record, col_name, row[col_name])
         
@@ -650,22 +650,22 @@ class OceanBaseVectorStore(VectorStoreBase):
         updated_at = record.updated_at
         category = record.category
         
-        # 处理可选字段
+        # Handle optional fields
         vector = None
         sparse_embedding = None
         score_or_distance = None
         
         if include_vector:
-            # get/list 场景：包含 vector 字段
+            # get/list scenario: includes vector field
             vector = record.embedding
             if self.include_sparse and hasattr(record, 'sparse_embedding') and record.sparse_embedding is not None:
                 sparse_embedding = record.sparse_embedding
         else:
-            # 搜索场景：不包含 vector，但可能包含 sparse_embedding
+            # Search scenario: does not include vector, but may include sparse_embedding
             if self.include_sparse and hasattr(record, 'sparse_embedding') and record.sparse_embedding is not None:
                 sparse_embedding = record.sparse_embedding
         
-        # 提取额外的 score/distance 字段（这些字段不在 Model 中，需要从原始 row 获取）
+        # Extract additional score/distance fields (these fields are not in Model, need to get from original row)
         if extract_score:
             if 'score' in row.keys():
                 score_or_distance = row['score']
@@ -1194,23 +1194,24 @@ class OceanBaseVectorStore(VectorStoreBase):
         k: int = 60
     ) -> Dict:
         """
-        对每个文档的权重进行自适应归一化
+        Adaptively normalize weights for each document.
         
-        原理：根据文档实际被几路召回，动态调整权重总和为1.0，
-        解决混合状态下（部分数据有稀疏向量，部分没有）的不公平性问题。
+        Principle: Dynamically adjust the total weight to 1.0 based on how many retrieval paths
+        the document was actually retrieved from, solving the unfairness issue in mixed states
+        (some data has sparse vectors, some don't).
         
         Args:
-            all_docs: 文档字典 {doc_id: {'result': ..., 'vector_rank': ..., 'fts_rank': ..., 'sparse_rank': ..., 'rrf_score': ...}}
-            vector_w: 向量搜索权重
-            fts_w: 全文搜索权重
-            sparse_w: 稀疏向量搜索权重
-            k: RRF常量（默认60）
+            all_docs: Document dictionary {doc_id: {'result': ..., 'vector_rank': ..., 'fts_rank': ..., 'sparse_rank': ..., 'rrf_score': ...}}
+            vector_w: Vector search weight
+            fts_w: Full-text search weight
+            sparse_w: Sparse vector search weight
+            k: RRF constant (default: 60)
         
         Returns:
-            归一化后的all_docs（修改了rrf_score）
+            Normalized all_docs (rrf_score modified)
         """
         for doc_id, doc_data in all_docs.items():
-            # 统计该文档被几路召回及其对应权重
+            # Count how many retrieval paths this document was retrieved from and their corresponding weights
             active_weights = []
             if doc_data['vector_rank'] is not None:
                 active_weights.append(('vector', vector_w, doc_data['vector_rank']))
@@ -1219,13 +1220,13 @@ class OceanBaseVectorStore(VectorStoreBase):
             if doc_data['sparse_rank'] is not None:
                 active_weights.append(('sparse', sparse_w, doc_data['sparse_rank']))
             
-            # 计算有效权重总和
+            # Calculate total effective weight
             total_weight = sum(w for _, w, _ in active_weights)
             
             if total_weight == 0:
                 continue
             
-            # 归一化并重新计算rrf_score
+            # Normalize and recalculate rrf_score
             normalized_score = 0.0
             
             for path, weight, rank in active_weights:
@@ -1304,8 +1305,8 @@ class OceanBaseVectorStore(VectorStoreBase):
                     'rrf_score': sparse_rrf_score
                 }
 
-        # 权重自适应归一化：解决混合状态下的不公平性
-        # 对于每个文档，根据实际参与的路径数重新归一化权重
+        # Adaptive weight normalization: solve unfairness in mixed states
+        # For each document, re-normalize weights based on the actual number of participating paths
         all_docs = self._normalize_weights_adaptively(
             all_docs, vector_w, fts_w, sparse_w, k
         )
