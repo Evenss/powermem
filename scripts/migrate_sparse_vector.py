@@ -64,13 +64,13 @@ class SparseMigrationWorker:
         """从Memory对象初始化组件"""
         # 获取storage
         self.storage = self.memory.storage
-        if not hasattr(self.storage, 'obvector'):
+        if not hasattr(self.storage.vector_store, 'obvector'):
             raise ValueError("Memory storage must be OceanBaseVectorStore")
         
         # 获取数据库引擎
-        self.engine = self.storage.obvector.engine
+        self.engine = self.storage.vector_store.obvector.engine
         self.table_name = self.storage.collection_name
-        self.text_field = self.storage.text_field
+        self.text_field = self.storage.vector_store.text_field
         
         # 获取稀疏嵌入器
         self.sparse_embedder = getattr(self.memory, 'sparse_embedder', None)

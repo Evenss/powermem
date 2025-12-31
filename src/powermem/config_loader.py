@@ -88,7 +88,8 @@ def load_config_from_env() -> Dict[str, Any]:
             'vector_field': os.getenv('OCEANBASE_VECTOR_FIELD', 'embedding'),
             'text_field': os.getenv('OCEANBASE_TEXT_FIELD', 'document'),
             'metadata_field': os.getenv('OCEANBASE_METADATA_FIELD', 'metadata'),
-            'vidx_name': os.getenv('OCEANBASE_VIDX_NAME', 'memories_vidx')
+            'vidx_name': os.getenv('OCEANBASE_VIDX_NAME', 'memories_vidx'),
+            'include_sparse': os.getenv('OCEANBASE_INCLUDE_SPARSE', 'false').lower() == 'true'
         }
     elif db_provider == 'postgres':
         # PostgreSQL configuration (pgvector)
@@ -249,12 +250,9 @@ def load_config_from_env() -> Dict[str, Any]:
         sparse_embedder_config = {
             'api_key': os.getenv('SPARSE_EMBEDDER_API_KEY'),
             'model': os.getenv('SPARSE_EMBEDDER_MODEL'),
+            'base_url': os.getenv('SPARSE_EMBEDDING_BASE_URL',''),
             'embedding_dims': int(os.getenv('SPARSE_EMBEDDER_DIMS', '1536')),
         }
-        
-        # Provider-specific base_url
-        if sparse_embedder_provider == 'qwen':
-            sparse_embedder_config['dashscope_base_url'] = os.getenv('QWEN_SPARSE_BASE_URL')
         
         config['sparse_embedder'] = {
             'provider': sparse_embedder_provider,
