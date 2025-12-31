@@ -2,26 +2,32 @@
 PowerMem Script Manager
 
 Provides Python API to manage and execute various maintenance and upgrade scripts.
-All script executions require a configuration dictionary.
 
 Usage example:
-    from powermem import auto_config
+    from powermem import auto_config, Memory
     from scripts.script_manager import ScriptManager
-    
-    config = auto_config()
     
     # List available scripts
     ScriptManager.list_scripts()
     
+    # View script details
+    ScriptManager.info('migrate-sparse-vector')
+    
     # Execute upgrade script
-    success = ScriptManager.run('upgrade-sparse-vector', config)
+    config = auto_config()
+    ScriptManager.run('upgrade-sparse-vector', config)
+    
+    # Execute migration script
+    memory = Memory(config=config)
+    ScriptManager.run('migrate-sparse-vector', memory, batch_size=1000)
 """
 
 import importlib
+import inspect
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, get_type_hints
 
 logger = logging.getLogger(__name__)
 
@@ -129,37 +135,176 @@ class ScriptManager:
                 desc = script_info.get('description', 'No description')
                 destructive = script_info.get('destructive', False)
                 warning = " ⚠️  Destructive Operation" if destructive else ""
+                
+                # 尝试获取第一个参数类型提示
+                param_hint = cls._get_first_param_hint(script_name, script_info)
+                param_info = f" (requires: {param_hint})" if param_hint else ""
+                
                 logger.info(f"  • {script_name}{warning}")
-                logger.info(f"    {desc}")
+                logger.info(f"    {desc}{param_info}")
         
         logger.info("\n" + "=" * 70)
-        logger.info("Usage: ScriptManager.run('script_name', config)")
+        logger.info("Usage: ScriptManager.run('script_name', param)")
+        logger.info("Tip: Use ScriptManager.info('script_name') to view detailed parameters")
         logger.info("=" * 70 + "\n")
     
     @classmethod
-    def run(cls, script_name: str, config: Any, **kwargs) -> bool:
+    def _get_first_param_hint(cls, script_name: str, script_info: Dict[str, Any]) -> Optional[str]:
+        """获取脚本第一个参数的类型提示"""
+        try:
+            module = importlib.import_module(script_info['module'])
+            func = getattr(module, script_info['function'])
+            sig = inspect.signature(func)
+            
+            # 获取第一个参数
+            params = list(sig.parameters.values())
+            if params:
+                first_param = params[0]
+                if first_param.annotation != inspect.Parameter.empty:
+                    annotation = first_param.annotation
+                    # 处理字符串类型的注解（如 'Memory'）
+                    if isinstance(annotation, str):
+                        return annotation
+                    # 处理类型对象
+                    return getattr(annotation, '__name__', str(annotation))
+        except Exception:
+            pass
+        return None
+    
+    @classmethod
+    def info(cls, script_name: str) -> None:
+        """
+        显示脚本的详细信息，包括参数签名和文档
+        
+        Args:
+            script_name: 脚本名称
+            
+        Example:
+            ScriptManager.info('migrate-sparse-vector')
+        """
+        try:
+            # 获取脚本配置信息
+            script_info = cls._get_script_info(script_name)
+            
+            # 加载模块和函数
+            module = importlib.import_module(script_info['module'])
+            func = getattr(module, script_info['function'])
+            
+            # 获取函数签名
+            sig = inspect.signature(func)
+            
+            # 获取函数文档
+            doc = inspect.getdoc(func) or "No documentation available"
+            
+            # 打印信息
+            logger.info("\n" + "=" * 70)
+            logger.info(f"Script: {script_name}")
+            logger.info("=" * 70)
+            logger.info(f"Category: {script_info.get('category', 'N/A')}")
+            logger.info(f"Description: {script_info.get('description', 'N/A')}")
+            
+            if script_info.get('destructive', False):
+                logger.info("⚠️  Warning: This is a DESTRUCTIVE operation!")
+            
+            logger.info("\n" + "-" * 70)
+            logger.info("Parameters:")
+            logger.info("-" * 70)
+            
+            # 解析参数信息
+            for param_name, param in sig.parameters.items():
+                # 参数类型
+                param_type = "Any"
+                if param.annotation != inspect.Parameter.empty:
+                    annotation = param.annotation
+                    if isinstance(annotation, str):
+                        param_type = annotation
+                    else:
+                        param_type = getattr(annotation, '__name__', str(annotation))
+                
+                # 默认值
+                if param.default != inspect.Parameter.empty:
+                    default_str = f", default={param.default}"
+                else:
+                    default_str = " (required)"
+                
+                logger.info(f"  {param_name} ({param_type}){default_str}")
+            
+            logger.info("\n" + "-" * 70)
+            logger.info("Documentation:")
+            logger.info("-" * 70)
+            for line in doc.split('\n'):
+                logger.info(f"  {line}")
+            
+            logger.info("\n" + "=" * 70)
+            logger.info("Usage Example:")
+            logger.info("=" * 70)
+            
+            # 根据第一个参数类型生成使用示例
+            params = list(sig.parameters.values())
+            if params:
+                first_param = params[0]
+                param_type_hint = None
+                if first_param.annotation != inspect.Parameter.empty:
+                    annotation = first_param.annotation
+                    param_type_hint = annotation if isinstance(annotation, str) else getattr(annotation, '__name__', None)
+                
+                if param_type_hint and 'Memory' in param_type_hint:
+                    logger.info(f"  from powermem import Memory, auto_config")
+                    logger.info(f"  from scripts.script_manager import ScriptManager")
+                    logger.info(f"  ")
+                    logger.info(f"  config = auto_config()")
+                    logger.info(f"  memory = Memory(config=config)")
+                    logger.info(f"  ScriptManager.run('{script_name}', memory)")
+                else:
+                    logger.info(f"  from powermem import auto_config")
+                    logger.info(f"  from scripts.script_manager import ScriptManager")
+                    logger.info(f"  ")
+                    logger.info(f"  config = auto_config()")
+                    logger.info(f"  ScriptManager.run('{script_name}', config)")
+            
+            logger.info("=" * 70 + "\n")
+            
+        except Exception as e:
+            logger.error(f"Failed to get script info: {e}", exc_info=True)
+    
+    @classmethod
+    def run(cls, script_name: str, param: Any, **kwargs) -> bool:
         """
         Execute the specified script
         
         Args:
             script_name: Script name
-            config: PowerMem configuration dictionary (dict or MemoryConfig)
+            param: Script parameter (config dict/MemoryConfig for upgrade/downgrade scripts, 
+                   Memory instance for migration scripts)
             **kwargs: Additional parameters to pass to the script function
             
         Returns:
             bool: Returns True on success, False on failure
             
         Raises:
-            ValueError: If config is None or script does not exist
+            ValueError: If param is None or script does not exist
+            
+        Examples:
+            # Upgrade/downgrade scripts (use config)
+            config = auto_config()
+            ScriptManager.run('upgrade-sparse-vector', config)
+            
+            # Migration scripts (use Memory instance)
+            memory = Memory(config=config)
+            ScriptManager.run('migrate-sparse-vector', memory, batch_size=1000)
         """
-        if config is None:
+        if param is None:
             raise ValueError(
-                "config parameter is required\n"
+                "param parameter is required\n"
                 "Example:\n"
-                "  from powermem import auto_config\n"
+                "  from powermem import auto_config, Memory\n"
                 "  from scripts.script_manager import ScriptManager\n"
                 "  config = auto_config()\n"
-                "  ScriptManager.run('upgrade-sparse-vector', config)"
+                "  # For upgrade/downgrade:\n"
+                "  ScriptManager.run('upgrade-sparse-vector', config)\n"
+                "  # For migration:\n"
+                "  memory = Memory(config=config)\n"
+                "  ScriptManager.run('migrate-sparse-vector', memory)"
             )
         
         try:
@@ -189,7 +334,7 @@ class ScriptManager:
             
             # Execute script
             logger.info(f"Executing script function: {function_name}")
-            result = script_func(config, **kwargs)
+            result = script_func(param, **kwargs)
             
             if result:
                 logger.info(f"\n✓ Script '{script_name}' executed successfully!")
@@ -197,6 +342,22 @@ class ScriptManager:
                 logger.error(f"\n✗ Script '{script_name}' execution failed")
             
             return result
+            
+        except TypeError as e:
+            # 捕获参数错误，给出友好提示
+            error_msg = str(e)
+            logger.error(f"\n✗ Parameter Error: {error_msg}")
+            
+            try:
+                sig = inspect.signature(script_func)
+                logger.error(f"\nExpected function signature:")
+                logger.error(f"  {function_name}{sig}")
+                logger.error(f"\nFor detailed parameter information, run:")
+                logger.error(f"  ScriptManager.info('{script_name}')")
+            except Exception:
+                pass
+            
+            return False
             
         except Exception as e:
             logger.error(f"Error occurred while executing script: {e}", exc_info=True)

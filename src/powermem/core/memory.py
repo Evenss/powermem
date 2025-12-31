@@ -234,7 +234,7 @@ class Memory(MemoryBase):
         # Pass vector_store_config so factory can extract embedding_model_dims for mock embeddings
         self.embedding = EmbedderFactory.create(self.embedding_provider, embedder_config, vector_store_config)
         
-        # Initialize sparse embedder if configured (only for OceanBase)
+        # Initialize sparse embedder if configured
         self.sparse_embedder = None
         if self.storage_type.lower() == 'oceanbase':
             sparse_config_obj = None

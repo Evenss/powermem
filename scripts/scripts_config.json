@@ -12,6 +12,12 @@
       "description": "Remove sparse vector support from OceanBase table (Warning: will delete all sparse vector data)",
       "category": "downgrade",
       "destructive": true
+    },
+    "migrate-sparse-vector": {
+      "module": "scripts.migrate_sparse_vector",
+      "function": "migrate_sparse_vector",
+      "description": "Migrate historical data to add sparse vector embeddings",
+      "category": "migration"
     }
   },
   "categories": {

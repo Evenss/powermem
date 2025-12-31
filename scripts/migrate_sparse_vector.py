@@ -1,23 +1,26 @@
 """
-稀疏向量数据迁移工具
+稀疏向量数据迁移脚本
 
 用于将历史数据迁移到稀疏向量格式。
 
-使用方式:
-    from powermem import Memory
-    from powermem.tools.migrate_sparse import migrate_sparse_vector
+Usage:
+    from powermem import Memory, auto_config
+    from scripts.script_manager import ScriptManager
     
+    config = auto_config()
     memory = Memory(config=config)
-    migrate_sparse_vector(
-        memory=memory,
-        batch_size=1000,
-        delay=0.1,
-        dry_run=False
-    )
+    
+    # 使用 ScriptManager 执行迁移
+    ScriptManager.run('migrate-sparse-vector', memory, batch_size=1000, dry_run=False)
+    
+    # 或直接调用函数
+    from scripts.migrate_sparse_vector import migrate_sparse_vector
+    migrate_sparse_vector(memory, batch_size=1000, dry_run=False)
 """
 import logging
 import time
-from typing import Dict, List, Optional, Any
+from typing import List, Optional, Any, Dict
+from sqlalchemy import text
 
 from src.powermem.utils import OceanBaseUtil
 
@@ -30,7 +33,6 @@ class SparseMigrationWorker:
     def __init__(
         self,
         memory,
-        module: str = 'sparse_vector',
         batch_size: int = 1000,
         delay: float = 0.1,
         dry_run: bool = False
@@ -40,13 +42,11 @@ class SparseMigrationWorker:
         
         Args:
             memory: Memory对象实例
-            module: 迁移模块名称（默认'sparse_vector'）
             batch_size: 批量处理大小
             delay: 批次间延迟（秒）
             dry_run: 是否为dry-run模式（测试100条数据）
         """
         self.memory = memory
-        self.module = module
         self.batch_size = batch_size
         self.delay = delay
         self.dry_run = dry_run
@@ -83,13 +83,12 @@ class SparseMigrationWorker:
         # 获取审计日志
         self.audit = getattr(self.memory, 'audit', None)
         
-        logger.info(f"Initialized migration worker for module: {self.module}")
-        logger.info(f"Database table: {self.table_name}")
+        logger.info(f"Initialized migration worker for sparse vector")
+        logger.info(f"  Database table: {self.table_name}")
+        logger.info(f"  Text field: {self.text_field}")
     
     def _get_total_count(self) -> int:
         """获取待迁移数据总数"""
-        from sqlalchemy import text
-        
         with self.engine.connect() as conn:
             result = conn.execute(text(
                 f"SELECT COUNT(*) FROM {self.table_name} "
@@ -107,8 +106,6 @@ class SparseMigrationWorker:
         Returns:
             记录列表 [{'id': ..., 'text_content': ...}, ...]
         """
-        from sqlalchemy import text
-        
         limit = 100 if self.dry_run else self.batch_size
         
         with self.engine.connect() as conn:
@@ -160,8 +157,6 @@ class SparseMigrationWorker:
         if self.dry_run:
             logger.info(f"[DRY RUN] Would update {len(updates)} records")
             return len(updates)
-        
-        from sqlalchemy import text
         
         success_count = 0
         
@@ -227,7 +222,7 @@ class SparseMigrationWorker:
         self.start_time = time.time()
         self.total_count = self._get_total_count()
         
-        logger.info(f"Starting migration for module: {self.module}")
+        logger.info(f"Starting sparse vector migration")
         logger.info(f"Total records to migrate: {self.total_count}")
         logger.info(f"Batch size: {self.batch_size}")
         
@@ -237,7 +232,6 @@ class SparseMigrationWorker:
         # 记录开始事件
         self._log_audit_event('started', {
             'status': 'started',
-            'module': self.module,
             'total_records': self.total_count,
             'batch_size': self.batch_size,
             'dry_run': self.dry_run
@@ -255,7 +249,6 @@ class SparseMigrationWorker:
             duration = time.time() - self.start_time
             self._log_audit_event('completed', {
                 'status': 'completed',
-                'module': self.module,
                 'total_records': self.total_count,
                 'migrated_count': self.migrated_count,
                 'failed_count': self.failed_count,
@@ -264,7 +257,6 @@ class SparseMigrationWorker:
             
             logger.info("=" * 50)
             logger.info("Migration completed!")
-            logger.info(f"  Module: {self.module}")
             logger.info(f"  Migrated: {self.migrated_count}")
             logger.info(f"  Failed: {self.failed_count}")
             logger.info(f"  Duration: {self._format_duration(duration)}")
@@ -273,7 +265,6 @@ class SparseMigrationWorker:
             # 记录失败事件
             self._log_audit_event('failed', {
                 'status': 'failed',
-                'module': self.module,
                 'error': str(e),
                 'migrated_count': self.migrated_count,
                 'failed_count': self.failed_count
@@ -288,11 +279,10 @@ class SparseMigrationWorker:
         speed = self.migrated_count / elapsed if elapsed > 0 else 0
         progress_pct = (self.migrated_count / self.total_count * 100) if self.total_count > 0 else 0
         
-        table = Table(title=f"Migration Progress - {self.module}")
+        table = Table(title=f"Sparse Vector Migration Progress")
         table.add_column("Metric", style="cyan")
         table.add_column("Value", style="green")
         
-        table.add_row("Module", self.module)
         table.add_row("Total Records", str(self.total_count))
         table.add_row("Migrated", f"{self.migrated_count} ({progress_pct:.1f}%)")
         table.add_row("Failed", str(self.failed_count))
@@ -403,66 +393,51 @@ class SparseMigrationWorker:
 
 
 def migrate_sparse_vector(
-    memory,
+    memory: 'Memory',
     batch_size: int = 1000,
     delay: float = 0.1,
     dry_run: bool = False
-) -> Dict[str, Any]:
+) -> bool:
     """
     迁移历史数据以添加稀疏向量
     
     Args:
-        memory: Memory对象实例
+        memory: Memory对象实例（必需）
         batch_size: 批量处理大小（默认1000）
         delay: 批次间延迟秒数（默认0.1）
         dry_run: 是否为干运行模式，只测试100条数据（默认False）
     
     Returns:
-        迁移结果统计信息
+        bool: 成功返回True，失败返回False
     
     Example:
         ```python
-        from powermem import Memory
-        from powermem.tools.migrate_sparse import migrate_sparse_vector
+        from powermem import Memory, auto_config
+        from scripts.script_manager import ScriptManager
         
+        config = auto_config()
         memory = Memory(config=config)
         
-        # 测试模式
-        result = migrate_sparse_vector(memory, dry_run=True)
+        # 使用ScriptManager执行（推荐）
+        ScriptManager.run('migrate-sparse-vector', memory, dry_run=True)
         
-        # 正式迁移
-        result = migrate_sparse_vector(memory, batch_size=500, delay=0.2)
-        
-        print(f"Migrated: {result['migrated_count']}")
-        print(f"Failed: {result['failed_count']}")
-        print(f"Duration: {result['duration']}")
+        # 或直接调用
+        from scripts.migrate_sparse_vector import migrate_sparse_vector
+        migrate_sparse_vector(memory, batch_size=500, dry_run=True)
         ```
     """
     try:
+        # 创建并运行Worker
         worker = SparseMigrationWorker(
             memory=memory,
-            module='sparse_vector',
             batch_size=batch_size,
             delay=delay,
             dry_run=dry_run
         )
         worker.run()
         
-        duration = time.time() - worker.start_time if worker.start_time else 0
-        
-        return {
-            'status': 'success',
-            'module': 'sparse_vector',
-            'total_records': worker.total_count,
-            'migrated_count': worker.migrated_count,
-            'failed_count': worker.failed_count,
-            'duration': duration
-        }
+        return True
         
     except Exception as e:
         logger.error(f"Migration failed: {e}", exc_info=True)
-        return {
-            'status': 'failed',
-            'module': 'sparse_vector',
-            'error': str(e)
-        }
+        return False
