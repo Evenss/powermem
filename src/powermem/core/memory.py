@@ -236,7 +236,9 @@ class Memory(MemoryBase):
         
         # Initialize sparse embedder if configured
         self.sparse_embedder = None
-        if self.storage_type.lower() == 'oceanbase':
+        # Check if include_sparse is enabled in vector_store config
+        include_sparse = vector_store_config.get('include_sparse', False)
+        if self.storage_type.lower() == 'oceanbase' and include_sparse:
             sparse_config_obj = None
             sparse_embedder_provider = None
             
