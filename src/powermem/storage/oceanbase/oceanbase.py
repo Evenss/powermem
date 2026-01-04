@@ -569,8 +569,8 @@ class OceanBaseVectorStore(VectorStoreBase):
         # Iterate through all columns in the table, map values from Row to Model instance
         for col_name in self.model_class.__table__.c.keys():
             # Check if Row contains this column (queries may not include all columns)
-            if col_name in row.keys():
-                setattr(record, col_name, row[col_name])
+            if col_name in row._mapping.keys():
+                setattr(record, col_name, row._mapping[col_name])
         
         return record
 
@@ -681,10 +681,12 @@ class OceanBaseVectorStore(VectorStoreBase):
         
         # Extract additional score/distance fields (these fields are not in Model, need to get from original row)
         if extract_score:
-            if 'score' in row.keys():
-                score_or_distance = row['score']
-            elif 'distance' in row.keys():
-                score_or_distance = row['distance']
+            if 'score' in row._mapping.keys():
+                score_or_distance = row._mapping['score']
+            elif 'distance' in row._mapping.keys():
+                score_or_distance = row._mapping['distance']
+            elif 'anon_1' in row._mapping.keys():
+                score_or_distance = row._mapping['anon_1']
         
         # Build standard metadata
         metadata = {

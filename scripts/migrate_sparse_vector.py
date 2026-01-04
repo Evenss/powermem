@@ -510,7 +510,7 @@ class SparseMigrationWorker:
 
 def migrate_sparse_vector(
     memory: 'Memory',
-    batch_size: int = 10,
+    batch_size: int = 100,
     delay: float = 0.1,
     workers: int = 1,
     dry_run: bool = False
