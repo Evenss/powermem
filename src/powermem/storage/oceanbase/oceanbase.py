@@ -450,7 +450,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             logger.error(f"Failed to insert vectors into collection '{self.collection_name}': {e}", exc_info=True)
             raise
 
-    def _generate_where_clause(self, filters: Optional[Dict] = None) -> Optional[List]:
+    def _generate_where_clause(self, filters: Optional[Dict] = None, table = None) -> Optional[List]:
         """
         Generate a properly formatted where clause for OceanBase.
 
@@ -467,18 +467,22 @@ class OceanBaseVectorStore(VectorStoreBase):
                 - AND logic: {"AND": [{"user_id": "alice"}, {"category": "food"}]}
                 - OR logic: {"OR": [{"rating": {"gte": 4.0}}, {"priority": "high"}]}
                 - Nested: {"AND": [{"user_id": "alice"}, {"OR": [{"rating": {"gte": 4.0}}, {"priority": "high"}]}]}
+            table: SQLAlchemy Table object to use for column references. If None, uses self.table.
 
         Returns:
             Optional[List]: List of SQLAlchemy ColumnElement objects for where clause.
         """
+        # Use provided table or fall back to self.table
+        if table is None:
+            table = self.table
 
         def get_column(key) -> ColumnElement:
             """Get the appropriate column element for a field."""
-            if key in self.table.c:
-                return self.table.c[key]
+            if key in table.c:
+                return table.c[key]
             else:
                 # Use ->> operator for unquoted JSON extract (MySQL/PostgreSQL)
-                return self.table.c[self.metadata_field].op("->>")(f"$.{key}")
+                return table.c[self.metadata_field].op("->>")(f"$.{key}")
 
         def build_condition(key, value):
             """Build a single condition."""
@@ -647,7 +651,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             - vector: Vector data (only if include_vector=True)
             - user_id, agent_id, run_id, actor_id, hash_val: Standard fields
             - created_at, updated_at, category: Timestamp and category fields
-            - metadata: Built metadata dictionary with sparse_embedding if available
+            - metadata: Built metadata dictionary
             - score_or_distance: Score or distance value (only if extract_score=True)
         """
         record = self._row_to_model(row)
@@ -701,10 +705,6 @@ class OceanBaseVectorStore(VectorStoreBase):
             # Store user metadata as nested structure to preserve it
             "metadata": OceanBaseUtil.parse_metadata(metadata_json)
         }
-        
-        # Add sparse_embedding to metadata if it exists
-        if sparse_embedding is not None:
-            metadata["sparse_embedding"] = sparse_embedding
         
         # Build result dictionary
         result = {
@@ -815,8 +815,13 @@ class OceanBaseVectorStore(VectorStoreBase):
                 logger.warning("Invalid vector format provided for search")
                 return []
 
-            # Build where clause from filters
-            where_clause = self._generate_where_clause(filters)
+            # Create Table object for where clause to avoid table reference conflicts
+            # This ensures the same Table object is used both in where_clause and ann_search
+            from sqlalchemy import Table
+            table = Table(self.collection_name, self.obvector.metadata_obj, autoload_with=self.obvector.engine)
+            
+            # Build where clause from filters using the same table object
+            where_clause = self._generate_where_clause(filters, table=table)
 
             # Build output column names list
             output_columns = self._get_standard_column_names()
@@ -838,7 +843,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             for row in results.fetchall():
                 parsed = self._parse_row_to_dict(row, include_vector=False, extract_score=True)
                 
-                # Convert distance to score based on metric type
+                # Convert distance to similarity score (0-1 range, higher is better)
                 # Handle None distance (shouldn't happen but be defensive)
                 distance = parsed["score_or_distance"]
                 vector_id = parsed["vector_id"]
@@ -846,21 +851,33 @@ class OceanBaseVectorStore(VectorStoreBase):
                 metadata = parsed["metadata"]
                 
                 if distance is None:
-                    logger.warning(f"Distance is None for vector_id {vector_id}, using default score 0.0")
-                    score = 0.0
+                    logger.warning(f"Distance is None for vector_id {vector_id}, using default similarity 0.0")
+                    similarity = 0.0
                 elif self.vidx_metric_type == "l2":
-                    # For L2 distance, lower is better, so we can use 1/(1+distance) or just use distance
-                    score = float(distance)
+                    # For L2 distance, lower is better. Convert to similarity: 1/(1+distance)
+                    similarity = 1.0 / (1.0 + float(distance))
                 elif self.vidx_metric_type == "cosine":
-                    # For cosine distance, lower is better
-                    score = float(distance)
+                    # For cosine distance (range 0-2), lower is better. Convert to similarity: 1 - distance/2
+                    # This maps distance 0->1.0, distance 2->0.0
+                    similarity = max(0.0, 1.0 - float(distance) / 2.0)
                 elif self.vidx_metric_type == "inner_product":
-                    # For inner product, higher is better, so we negate the distance
-                    score = -float(distance)
+                    # For inner product, higher is better (returns negative distance)
+                    # For normalized vectors, inner product is in range [-1, 1]
+                    # Convert to similarity: (inner_product + 1) / 2
+                    inner_prod = -float(distance)  # Negate to get actual inner product
+                    similarity = (inner_prod + 1.0) / 2.0
+                    similarity = max(0.0, min(1.0, similarity))  # Clamp to [0, 1]
                 else:
-                    score = float(distance)
+                    # Unknown metric, use default
+                    similarity = 0.0
+                
+                # Store original similarity in metadata
+                metadata['_vector_similarity'] = similarity
+                
+                # For pure vector search (no fusion), quality score equals vector similarity
+                metadata['_quality_score'] = similarity
 
-                search_results.append(self._create_output_data(vector_id, text_content, score, metadata))
+                search_results.append(self._create_output_data(vector_id, text_content, similarity, metadata))
             logger.debug(f"_vector_search results, len : {len(search_results)}")
             return search_results
             
@@ -963,12 +980,18 @@ class OceanBaseVectorStore(VectorStoreBase):
         for row in rows:
             parsed = self._parse_row_to_dict(row, include_vector=False, extract_score=True)
             
-            # Use the actual FTS score from the query
+            # FTS score is already in 0-1 range (higher is better)
+            fts_score = float(parsed["score_or_distance"])
+            
+            # Store original similarity in metadata
+            metadata = parsed["metadata"]
+            metadata['_fts_score'] = fts_score
+            
             fts_results.append(self._create_output_data(
                 parsed["vector_id"], 
                 parsed["text_content"], 
-                float(parsed["score_or_distance"]), 
-                parsed["metadata"]
+                fts_score, 
+                metadata
             ))
 
         logger.info(f"_fulltext_search results, len : {len(fts_results)}, fts_results : {fts_results}")
@@ -1039,16 +1062,31 @@ class OceanBaseVectorStore(VectorStoreBase):
             for row in rows:
                 parsed = self._parse_row_to_dict(row, include_vector=False, extract_score=True)
                 
-                # Convert negative_inner_product to score (negate to make higher = better)
-                # negative_inner_product returns negative values, so we negate to get positive scores
+                # Convert negative_inner_product to similarity (0-1 range, higher is better)
+                # negative_inner_product returns negative values, negate to get inner product
                 sparse_score = parsed["score_or_distance"]
-                score = -float(sparse_score) if sparse_score is not None else 0.0
+                if sparse_score is not None:
+                    inner_prod = -float(sparse_score)
+                    # Convert inner product to similarity using sigmoid-like transformation
+                    # For positive inner products: similarity = inner_prod / (1 + inner_prod)
+                    # This maps [0, inf) to [0, 1)
+                    if inner_prod >= 0:
+                        similarity = inner_prod / (1.0 + inner_prod)
+                    else:
+                        # For negative inner products, map to very low similarity
+                        similarity = max(0.0, 1.0 / (1.0 - inner_prod))
+                else:
+                    similarity = 0.0
+                
+                # Store original similarity in metadata
+                metadata = parsed["metadata"]
+                metadata['_sparse_similarity'] = similarity
                 
                 sparse_results.append(self._create_output_data(
                     parsed["vector_id"], 
                     parsed["text_content"], 
-                    score, 
-                    parsed["metadata"]
+                    similarity, 
+                    metadata
                 ))
             
             logger.debug(f"_sparse_search results, len : {len(sparse_results)}")
@@ -1188,6 +1226,71 @@ class OceanBaseVectorStore(VectorStoreBase):
         logger.debug(f"Rerank completed: {len(final_results)} results")
 
         return final_results
+
+    def _calculate_quality_score(
+        self,
+        vector_similarity: Optional[float] = None,
+        fts_score: Optional[float] = None,
+        sparse_similarity: Optional[float] = None,
+        vector_weight: float = 0.5,
+        fts_weight: float = 0.3,
+        sparse_weight: float = 0.2
+    ) -> float:
+        """
+        Calculate quality score from multiple search paths.
+        
+        Quality score represents the absolute similarity quality (0-1 range),
+        used for threshold filtering. Unlike fusion scores used for ranking,
+        quality scores maintain semantic meaning across different search scenarios.
+        
+        Args:
+            vector_similarity: Vector search similarity (0-1, higher is better)
+            fts_score: Full-text search score (0-1, higher is better)
+            sparse_similarity: Sparse vector search similarity (0-1, higher is better)
+            vector_weight: Weight for vector search (default: 0.5)
+            fts_weight: Weight for full-text search (default: 0.3)
+            sparse_weight: Weight for sparse vector search (default: 0.2)
+            
+        Returns:
+            Quality score in range [0, 1], where higher means better quality
+            
+        Algorithm:
+            1. Identify which search paths participated (have non-None scores)
+            2. Sum the weights of active paths
+            3. Calculate weighted average: sum(weight_i / total_weight * score_i)
+            4. This ensures quality score is always in [0, 1] regardless of which paths participated
+        """
+        # Collect active search paths and their scores
+        active_paths = []
+        
+        if vector_similarity is not None:
+            active_paths.append((vector_weight, vector_similarity))
+        
+        if fts_score is not None:
+            active_paths.append((fts_weight, fts_score))
+        
+        if sparse_similarity is not None:
+            active_paths.append((sparse_weight, sparse_similarity))
+        
+        # If no active paths, return 0
+        if not active_paths:
+            return 0.0
+        
+        # Calculate total weight of active paths
+        total_weight = sum(weight for weight, _ in active_paths)
+        
+        # Handle edge case where total weight is 0
+        if total_weight == 0:
+            return 0.0
+        
+        # Calculate weighted average quality score
+        quality_score = sum(
+            (weight / total_weight) * score 
+            for weight, score in active_paths
+        )
+        
+        # Ensure result is in [0, 1] range
+        return max(0.0, min(1.0, quality_score))
 
     def _combine_search_results(self, vector_results: List[OutputData], fts_results: List[OutputData],
                                 sparse_results: Optional[List[OutputData]],
@@ -1340,6 +1443,29 @@ class OceanBaseVectorStore(VectorStoreBase):
         final_results = []
         for score, _, doc_data in sorted(heap, key=lambda x: x[0], reverse=True):
             result = doc_data['result']
+            
+            # Extract original similarity scores from metadata
+            vector_similarity = result.payload.get('_vector_similarity')
+            fts_score = result.payload.get('_fts_score')
+            sparse_similarity = result.payload.get('_sparse_similarity')
+            
+            # Calculate quality score for threshold filtering
+            quality_score = self._calculate_quality_score(
+                vector_similarity=vector_similarity,
+                fts_score=fts_score,
+                sparse_similarity=sparse_similarity,
+                vector_weight=vector_w,
+                fts_weight=fts_w,
+                sparse_weight=sparse_w
+            )
+            
+            # Store quality score in payload
+            result.payload['_quality_score'] = quality_score
+            
+            # Store fusion score (RRF score) in payload for debugging
+            result.payload['_fusion_score'] = score
+            
+            # Set result.score to fusion score (used for ranking)
             result.score = score
             # Add ranking information to metadata for debugging
             result.payload['_fusion_info'] = {
@@ -1358,37 +1484,36 @@ class OceanBaseVectorStore(VectorStoreBase):
 
     def _weighted_fusion(self, vector_results: List[OutputData], fts_results: List[OutputData],
                          sparse_results: Optional[List[OutputData]],
-                         limit: int, vector_weight: float = 0.7, text_weight: float = 0.3):
-        """Traditional weighted score fusion (fallback method)."""
+                         limit: int, vector_weight: float = 0.7, text_weight: float = 0.3, sparse_weight: float = 0.0):
+        """
+        Traditional weighted score fusion (fallback method).
+        
+        Note: All input scores are already in 0-1 similarity range (higher is better),
+        so no normalization is needed.
+        """
         if sparse_results is None:
             sparse_results = []
+        
+        # Use instance weights if available
+        vector_w = self.vector_weight if self.vector_weight is not None else vector_weight
+        fts_w = self.fts_weight if self.fts_weight is not None else text_weight
+        sparse_w = 0.0
+        if self.include_sparse and sparse_results:
+            sparse_w = self.sparse_weight if self.sparse_weight is not None else sparse_weight
+        
         # Create a mapping of id to results for deduplication
         combined_results = {}
 
-        # Normalize vector scores to 0-1 range
-        if vector_results:
-            vector_scores = [result.score for result in vector_results]
-            min_vector_score = min(vector_scores)
-            max_vector_score = max(vector_scores)
-            vector_score_range = max_vector_score - min_vector_score
+        # Process vector search results (scores are already 0-1 similarity)
+        for result in vector_results:
+            combined_results[result.id] = {
+                'result': result,
+                'vector_score': result.score,  # Already 0-1 similarity
+                'fts_score': 0.0,
+                'sparse_score': 0.0
+            }
 
-            for result in vector_results:
-                if vector_score_range > 0:
-                    # For distance metrics, lower is better, so we invert the normalized score
-                    if self.vidx_metric_type in ["l2", "cosine"]:
-                        normalized_score = 1.0 - (result.score - min_vector_score) / vector_score_range
-                    else:  # inner_product
-                        normalized_score = (result.score - min_vector_score) / vector_score_range
-                else:
-                    normalized_score = 1.0
-
-                combined_results[result.id] = {
-                    'result': result,
-                    'vector_score': normalized_score,
-                    'fts_score': 0.0
-                }
-
-        # Add FTS results (FTS scores are already normalized to 0-1)
+        # Add FTS results (scores are already 0-1)
         for result in fts_results:
             if result.id in combined_results:
                 # Update existing result with FTS score
@@ -1398,14 +1523,30 @@ class OceanBaseVectorStore(VectorStoreBase):
                 combined_results[result.id] = {
                     'result': result,
                     'vector_score': 0.0,
-                    'fts_score': result.score
+                    'fts_score': result.score,
+                    'sparse_score': 0.0
+                }
+        
+        # Add sparse vector search results (scores are already 0-1 similarity)
+        for result in sparse_results:
+            if result.id in combined_results:
+                # Update existing result with sparse score
+                combined_results[result.id]['sparse_score'] = result.score
+            else:
+                # Add new sparse-only result
+                combined_results[result.id] = {
+                    'result': result,
+                    'vector_score': 0.0,
+                    'fts_score': 0.0,
+                    'sparse_score': result.score
                 }
 
         # Calculate combined scores and create final results
         heap = []
         for doc_id, doc_data in combined_results.items():
-            combined_score = (vector_weight * doc_data['vector_score'] +
-                              text_weight * doc_data['fts_score'])
+            combined_score = (vector_w * doc_data['vector_score'] +
+                              fts_w * doc_data['fts_score'] +
+                              sparse_w * doc_data['sparse_score'])
 
             if len(heap) < limit:
                 heapq.heappush(heap, (combined_score, doc_id, doc_data))
@@ -1415,13 +1556,40 @@ class OceanBaseVectorStore(VectorStoreBase):
         final_results = []
         for score, _, doc_data in sorted(heap, key=lambda x: x[0], reverse=True):
             result = doc_data['result']
+            
+            # Extract original similarity scores from metadata
+            vector_similarity = result.payload.get('_vector_similarity')
+            fts_score = result.payload.get('_fts_score')
+            sparse_similarity = result.payload.get('_sparse_similarity')
+            
+            # Calculate quality score for threshold filtering
+            quality_score = self._calculate_quality_score(
+                vector_similarity=vector_similarity,
+                fts_score=fts_score,
+                sparse_similarity=sparse_similarity,
+                vector_weight=vector_w,
+                fts_weight=fts_w,
+                sparse_weight=sparse_w
+            )
+            
+            # Store quality score in payload
+            result.payload['_quality_score'] = quality_score
+            
+            # Store fusion score in payload for debugging
+            result.payload['_fusion_score'] = score
+            
+            # Set result.score to fusion score (used for ranking)
             result.score = score
             # Add fusion info for debugging
             result.payload['_fusion_info'] = {
                 'vector_score': doc_data['vector_score'],
                 'fts_score': doc_data['fts_score'],
+                'sparse_score': doc_data['sparse_score'],
                 'combined_score': score,
-                'fusion_method': 'weighted'
+                'fusion_method': 'weighted',
+                'vector_weight': vector_w,
+                'fts_weight': fts_w,
+                'sparse_weight': sparse_w
             }
             final_results.append(result)
 
