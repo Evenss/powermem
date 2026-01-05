@@ -58,7 +58,7 @@ LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
 # Embedder Configuration (can use different API key than LLM)
 EMBEDDER_MODEL_BASE_URL = os.getenv("EMBEDDER_MODEL_BASE_URL", OPENAI_BASE_URL)
 EMBEDDER_API_KEY = os.getenv("EMBEDDER_API_KEY", OPENAI_API_KEY)  # Fallback to OPENAI_API_KEY if not set
-EMBEDDER_MODEL = os.getenv("EMBEDDER_MODEL", "text-embedding-3-small")
+EMBEDDER_MODEL = os.getenv("EMBEDDER_MODEL", "text-embedding-4")
 EMBEDDER_DIMS = int(os.getenv("EMBEDDER_DIMS", "1536"))
 
 # Database Configuration
@@ -135,6 +135,14 @@ def load_config() -> Dict[str, Any]:
             }
         },
         "history_db_path": HISTORY_DB_PATH,
+        "reranker": {
+            "enabled": True,
+            "provider": "qwen",
+            "config": {
+                "api_key": EMBEDDER_API_KEY,
+                "model": "qwen3-rerank",
+            }
+        }
     }
 
 
