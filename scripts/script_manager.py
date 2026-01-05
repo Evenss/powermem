@@ -136,7 +136,7 @@ class ScriptManager:
                 destructive = script_info.get('destructive', False)
                 warning = " ⚠️  Destructive Operation" if destructive else ""
                 
-                # 尝试获取第一个参数类型提示
+                # Try to get the type hint of the first parameter
                 param_hint = cls._get_first_param_hint(script_name, script_info)
                 param_info = f" (requires: {param_hint})" if param_hint else ""
                 
@@ -150,22 +150,22 @@ class ScriptManager:
     
     @classmethod
     def _get_first_param_hint(cls, script_name: str, script_info: Dict[str, Any]) -> Optional[str]:
-        """获取脚本第一个参数的类型提示"""
+        """Get the type hint of the first parameter of the script"""
         try:
             module = importlib.import_module(script_info['module'])
             func = getattr(module, script_info['function'])
             sig = inspect.signature(func)
             
-            # 获取第一个参数
+            # Get the first parameter
             params = list(sig.parameters.values())
             if params:
                 first_param = params[0]
                 if first_param.annotation != inspect.Parameter.empty:
                     annotation = first_param.annotation
-                    # 处理字符串类型的注解（如 'Memory'）
+                    # Handle string type annotations (e.g., 'Memory')
                     if isinstance(annotation, str):
                         return annotation
-                    # 处理类型对象
+                    # Handle type objects
                     return getattr(annotation, '__name__', str(annotation))
         except Exception:
             pass
@@ -174,29 +174,29 @@ class ScriptManager:
     @classmethod
     def info(cls, script_name: str) -> None:
         """
-        显示脚本的详细信息，包括参数签名和文档
+        Display detailed information about the script, including parameter signatures and documentation
         
         Args:
-            script_name: 脚本名称
+            script_name: Script name
             
         Example:
             ScriptManager.info('migrate-sparse-vector')
         """
         try:
-            # 获取脚本配置信息
+            # Get script configuration information
             script_info = cls._get_script_info(script_name)
             
-            # 加载模块和函数
+            # Load module and function
             module = importlib.import_module(script_info['module'])
             func = getattr(module, script_info['function'])
             
-            # 获取函数签名
+            # Get function signature
             sig = inspect.signature(func)
             
-            # 获取函数文档
+            # Get function documentation
             doc = inspect.getdoc(func) or "No documentation available"
             
-            # 打印信息
+            # Print information
             logger.info("\n" + "=" * 70)
             logger.info(f"Script: {script_name}")
             logger.info("=" * 70)
@@ -210,9 +210,9 @@ class ScriptManager:
             logger.info("Parameters:")
             logger.info("-" * 70)
             
-            # 解析参数信息
+            # Parse parameter information
             for param_name, param in sig.parameters.items():
-                # 参数类型
+                # Parameter type
                 param_type = "Any"
                 if param.annotation != inspect.Parameter.empty:
                     annotation = param.annotation
@@ -221,7 +221,7 @@ class ScriptManager:
                     else:
                         param_type = getattr(annotation, '__name__', str(annotation))
                 
-                # 默认值
+                # Default value
                 if param.default != inspect.Parameter.empty:
                     default_str = f", default={param.default}"
                 else:
@@ -239,7 +239,7 @@ class ScriptManager:
             logger.info("Usage Example:")
             logger.info("=" * 70)
             
-            # 根据第一个参数类型生成使用示例
+            # Generate usage example based on the first parameter type
             params = list(sig.parameters.values())
             if params:
                 first_param = params[0]
@@ -344,7 +344,7 @@ class ScriptManager:
             return result
             
         except TypeError as e:
-            # 捕获参数错误，给出友好提示
+            # Catch parameter errors and provide friendly hints
             error_msg = str(e)
             logger.error(f"\n✗ Parameter Error: {error_msg}")
             
