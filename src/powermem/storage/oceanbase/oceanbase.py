@@ -815,9 +815,6 @@ class OceanBaseVectorStore(VectorStoreBase):
                 logger.warning("Invalid vector format provided for search")
                 return []
 
-            # Create Table object for where clause to avoid table reference conflicts
-            # This ensures the same Table object is used both in where_clause and ann_search
-            from sqlalchemy import Table
             table = Table(self.collection_name, self.obvector.metadata_obj, autoload_with=self.obvector.engine)
             
             # Build where clause from filters using the same table object
@@ -1766,8 +1763,10 @@ class OceanBaseVectorStore(VectorStoreBase):
     def list(self, filters: Optional[Dict] = None, limit: Optional[int] = None):
         """List all memories."""
         try:
-            # Build where clause from filters
-            where_clause = self._generate_where_clause(filters)
+            table = Table(self.collection_name, self.obvector.metadata_obj, autoload_with=self.obvector.engine)
+            
+            # Build where clause from filters using the same table object
+            where_clause = self._generate_where_clause(filters, table=table)
 
             # Build output column name list
             output_columns = self._get_standard_column_names(include_vector_field=True)
