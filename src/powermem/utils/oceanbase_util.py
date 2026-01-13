@@ -328,10 +328,10 @@ class OceanBaseUtil:
         parser_mapping = {
             'ik': FtsParser.IK,
             'ngram': FtsParser.NGRAM,
-            # pyobvector don't support
-            'ngram2': FtsParser.NGRAM,
-            'beng': FtsParser.NGRAM,
-            'space': FtsParser.NGRAM,
+            'ngram2': FtsParser.NGRAM2,
+            'beng': FtsParser.BASIC_ENGLISH,
+            'space': None,
+            'jieba': FtsParser.JIEBA,
         }
         
         parser_lower = parser_name.lower()
