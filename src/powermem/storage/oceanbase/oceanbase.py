@@ -394,7 +394,8 @@ class OceanBaseVectorStore(VectorStoreBase):
         
         # Validate sparse vector support if enabled
         if self.include_sparse:
-            OceanBaseUtil.validate_sparse_vector_support(self.obvector, self.collection_name, self.sparse_vector_field)
+            if not OceanBaseUtil.check_sparse_vector_ready(self.obvector, self.collection_name, self.sparse_vector_field):
+                self.include_sparse = False
         
         self.model_class = create_memory_model(
             table_name=self.collection_name,

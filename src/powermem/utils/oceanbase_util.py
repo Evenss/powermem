@@ -374,44 +374,57 @@ class OceanBaseUtil:
             return {}
 
     @staticmethod
-    def validate_sparse_vector_support(obvector, collection_name: str, sparse_vector_field: str):
+    def check_sparse_vector_ready(obvector, collection_name: str, sparse_vector_field: str) -> bool:
         """
-        Validate sparse vector support (without creating anything).
+        Check if sparse vector support is ready (without creating anything).
         
         This method checks if sparse vector features are available:
         1. Database version supports sparse vector
         2. sparse_embedding column exists
         3. sparse_embedding_idx exists
         
-        If any check fails, a RuntimeError is raised with instructions to run the upgrade script.
+        If any check fails, a warning is logged and False is returned.
         
         Args:
             obvector: The ObVecClient instance.
             collection_name: The name of the collection/table.
             sparse_vector_field: The name of the sparse vector field.
         
-        Raises:
-            RuntimeError: If sparse vector support is not available or not configured.
+        Returns:
+            bool: True if sparse vector is fully supported, False otherwise.
         """
         # Check if database version supports sparse vector
         if not OceanBaseUtil.check_sparse_vector_version_support(obvector):
-            raise RuntimeError(
-                "Database version does not support sparse vector. "
+            logger.warning(
+                "Sparse vector support disabled: Database version does not support sparse vector. "
                 "Sparse vector requires seekdb or OceanBase >= 4.5.0. "
-                "Please upgrade your database or set include_sparse=False."
+                "Please upgrade your database to enable sparse vector support."
             )
+            return False
 
-        # Check if sparse_embedding column or sparse_embedding_idx index exists
-        if not OceanBaseUtil.check_sparse_vector_column_exists(obvector, collection_name, sparse_vector_field) or \
-           not OceanBaseUtil.check_sparse_vector_index_exists(obvector, collection_name):
-            raise RuntimeError(
-                f"Table '{collection_name}' does not have sparse_embedding column or sparse_embedding_idx index. "
-                f"Please run the upgrade script first:\n"
+        # Check if sparse_embedding column exists
+        if not OceanBaseUtil.check_sparse_vector_column_exists(obvector, collection_name, sparse_vector_field):
+            logger.warning(
+                f"Sparse vector support disabled: Table '{collection_name}' does not have sparse_embedding column. "
+                f"Please run the upgrade script to enable sparse vector support:\n"
                 f"  from powermem import auto_config\n"
                 f"  from scripts.script_manager import ScriptManager\n"
                 f"  config = auto_config()\n"
-                f"  ScriptManager.run('upgrade-sparse-vector', config)\n"
-                f"Or set include_sparse=False to disable sparse vector support."
+                f"  ScriptManager.run('upgrade-sparse-vector', config)"
             )
+            return False
+
+        # Check if sparse_embedding_idx index exists
+        if not OceanBaseUtil.check_sparse_vector_index_exists(obvector, collection_name):
+            logger.warning(
+                f"Sparse vector support disabled: Table '{collection_name}' does not have sparse_embedding_idx index. "
+                f"Please run the upgrade script to enable sparse vector support:\n"
+                f"  from powermem import auto_config\n"
+                f"  from scripts.script_manager import ScriptManager\n"
+                f"  config = auto_config()\n"
+                f"  ScriptManager.run('upgrade-sparse-vector', config)"
+            )
+            return False
         
         logger.info(f"Sparse vector support validated successfully for table '{collection_name}'")
+        return True
