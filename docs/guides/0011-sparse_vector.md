@@ -144,148 +144,20 @@ Search combines three methods: vector search, full-text search, and sparse vecto
 - `fts_weight`: Full-text search weight (default 0.5)
 - `sparse_weight`: Sparse vector search weight (default 0.25)
 
-## Schema Upgrade
+## Schema Upgrade and Data Migration
 
-If you already have a table without sparse vector support, you need to run the upgrade script first to add sparse vector support.
+If you already have a table without sparse vector support, you need to upgrade the schema and optionally migrate historical data.
 
-### List Available Scripts
+For detailed instructions on upgrading existing tables and migrating historical data, please refer to:
 
-```python
-from scripts.script_manager import ScriptManager
+**[Sparse Vector Migration Guide](../migration/sparse_vector_migration.md)**
 
-# List all available scripts
-ScriptManager.list_scripts()
-```
-
-Example output:
-```
-======================================================================
-PowerMem Available Scripts
-======================================================================
-
-【Upgrade Scripts - Add new features or upgrade existing features】
-----------------------------------------------------------------------
-  • upgrade-sparse-vector
-    Add sparse vector support to OceanBase table (add sparse_embedding column and index) (requires: dict)
-
-======================================================================
-```
-
-### View Script Details
-
-```python
-from scripts.script_manager import ScriptManager
-
-# View upgrade script details
-ScriptManager.info('upgrade-sparse-vector')
-```
-
-Example output:
-```
-======================================================================
-Script: upgrade-sparse-vector
-======================================================================
-Category: upgrade
-Description: Add sparse vector support to OceanBase table (add sparse_embedding column and index)
-
-----------------------------------------------------------------------
-Parameters:
-----------------------------------------------------------------------
-  config (dict) (required)
-```
-
-### Execute Upgrade Script
-
-```python
-from powermem import auto_config
-from scripts.script_manager import ScriptManager
-
-# Load configuration
-config = auto_config()
-
-# Run upgrade script
-ScriptManager.run('upgrade-sparse-vector', config)
-```
-
-The upgrade script performs the following operations:
-1. Check if the database version supports sparse vector
-2. Add `sparse_embedding` column (SPARSE_VECTOR type)
-3. Create `sparse_embedding_idx` index
-
-> **Note**: The upgrade script is idempotent and can be safely executed multiple times.
-
-## Historical Data Migration
-
-After schema upgrade, the `sparse_embedding` column for historical data is empty. **Historical data migration is not required**, but it is recommended to run the migration script to generate sparse vectors for historical data, for the following reasons:
-
-- **Only migrated data will participate in sparse vector retrieval**: Unmigrated historical data will not use sparse vector during search, only newly added data and migrated data will participate in sparse vector search
-- **More accurate results after migration**: Sparse vector search provides more accurate semantic matching. After migrating historical data, all data can benefit from the improved search accuracy brought by sparse vector
-- **New data automatically generated**: Even without migrating historical data, newly added data will automatically generate sparse vectors and participate in search
-
-### Execute Migration Script
-
-```python
-from powermem import Memory, auto_config
-from scripts.script_manager import ScriptManager
-
-# Load configuration
-config = auto_config()
-
-# Create Memory instance (migration script requires Memory instance)
-memory = Memory(config=config)
-
-# Run migration script
-ScriptManager.run('migrate-sparse-vector', memory, batch_size=100, workers=3)
-```
-
-### Migration Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `batch_size` | int | `100` | Number of records processed per batch |
-| `workers` | int | `1` | Number of concurrent threads, increasing can improve migration speed |
-| `delay` | float | `0.1` | Delay between batches (seconds) |
-| `dry_run` | bool | `False` | Test mode, only processes 100 records and does not write to database |
-
-### Test with dry-run Mode
-
-Before formal migration, it is recommended to test with dry-run mode first:
-
-```python
-# Test mode (only processes 100 records, does not write to database)
-ScriptManager.run('migrate-sparse-vector', memory, dry_run=True)
-```
-
-### Migration Progress
-
-Real-time progress will be displayed during migration:
-
-```
-Total: [████████░░░░░░] 57.1% | 5,710/10,000
-  ✓ Migrated: 5,710 | ✗ Failed: 0
-  ⏱ Elapsed: 2m 30s | Remaining: ~1m 52s | 📊 38.1 rec/s
-
-Workers (3):
-  Worker 0: ✓ 1,903 | ✗ 0
-  Worker 1: ✓ 1,904 | ✗ 0
-  Worker 2: ✓ 1,903 | ✗ 0
-```
-
-### Verify Migration Results
-
-After migration is complete, you can verify if sparse vector is working by performing a search:
-
-```python
-import logging
-
-# Enable DEBUG logging to view search details
-logging.getLogger().setLevel(logging.DEBUG)
-
-# Execute search
-result = memory.search(query="test query", limit=10)
-```
-
-You can see sparse vector search related information in the DEBUG logs.
+The migration guide covers:
+- Schema upgrade steps
+- Migration parameters and options
+- Progress monitoring
+- Verification methods
+- Rollback procedures
 
 ## Complete Usage Workflow
 
@@ -308,47 +180,5 @@ results = memory.search(query="query content", user_id="user123")
 
 ### Existing Table Upgrade
 
-If upgrading an existing table, follow these steps:
-
-```python
-from powermem import Memory, auto_config
-from scripts.script_manager import ScriptManager
-
-# 1. Load configuration
-config = auto_config()
-
-# 2. Run schema upgrade script (required)
-ScriptManager.run('upgrade-sparse-vector', config)
-
-# 3. Create Memory instance
-memory = Memory(config=config)
-
-# 4. Run data migration script (optional, but recommended)
-# Note: Only migrated data will participate in sparse vector retrieval, results are more accurate after migration
-ScriptManager.run('migrate-sparse-vector', memory, batch_size=100, workers=3)
-
-# 5. Verify
-results = memory.search(query="test query", limit=10)
-```
-
-> **Note**: Step 4 data migration is optional. If historical data is not migrated:
-> - Newly added data will automatically generate sparse vectors and participate in search
-> - Historical data will not participate in sparse vector retrieval, but can be found through vector search and full-text search
-> - After migrating historical data, all data can benefit from the improved search accuracy brought by sparse vector
-
-## Rollback (Optional)
-
-If you need to remove sparse vector support, you can run the downgrade script:
-
-```python
-from powermem import auto_config
-from scripts.script_manager import ScriptManager
-
-config = auto_config()
-
-# Run downgrade script (will delete all sparse vector data)
-ScriptManager.run('downgrade-sparse-vector', config)
-```
-
-> **Warning**: The downgrade script will delete the `sparse_embedding` column and index, all sparse vector data will be permanently deleted!
+If upgrading an existing table, please refer to the [Sparse Vector Migration Guide](../migration/sparse_vector_migration.md) for detailed instructions.
 
