@@ -33,7 +33,7 @@ OCEANBASE_COLLECTION=memories
 OCEANBASE_EMBEDDING_MODEL_DIMS=1536
 
 # Enable sparse vector
-OCEANBASE_INCLUDE_SPARSE=true
+SPARSE_VECTOR_ENABLE=true
 
 # Sparse vector embedding configuration
 SPARSE_EMBEDDER_PROVIDER=qwen
