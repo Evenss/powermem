@@ -384,10 +384,6 @@ class StorageAdapter:
             update_data = update_data.copy()
             del update_data["content"]
         
-        # Handle sparse_embedding field if explicitly provided in update_data
-        if "sparse_embedding" in update_data:
-            updated_payload["sparse_embedding"] = update_data["sparse_embedding"]
-        
         # Serialize datetime objects in update_data before merging
         serialized_update_data = serialize_datetime(update_data)
         

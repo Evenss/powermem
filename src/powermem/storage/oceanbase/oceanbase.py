@@ -1617,10 +1617,15 @@ class OceanBaseVectorStore(VectorStoreBase):
         """Update a vector and its payload."""
         try:
             # Get existing record to preserve fields not being updated
+            # Include sparse_vector_field to preserve sparse_embedding if not explicitly updated
+            output_columns = [self.vector_field]
+            if self.include_sparse:
+                output_columns.append(self.sparse_vector_field)
+            
             existing_result = self.obvector.get(
                 table_name=self.collection_name,
                 ids=[vector_id],
-                output_column_name=[self.vector_field]  # Get the existing vector
+                output_column_name=output_columns
             )
 
             existing_rows = existing_result.fetchall()
@@ -1633,13 +1638,16 @@ class OceanBaseVectorStore(VectorStoreBase):
                 self.primary_field: vector_id,
             }
 
+            # Extract existing values from row
+            existing_vector = existing_rows[0][0] if existing_rows[0] else None
+            existing_sparse_embedding = existing_rows[0][1] if self.include_sparse and len(existing_rows[0]) > 1 else None
+
             if vector is not None:
                 update_data[self.vector_field] = (
                     vector if not self.normalize else OceanBaseUtil.normalize(vector)
                 )
             else:
                 # Preserve the existing vector to avoid it being cleared by upsert
-                existing_vector = existing_rows[0][0] if existing_rows[0] else None
                 if existing_vector is not None:
                     update_data[self.vector_field] = existing_vector
                     logger.debug(f"Preserving existing vector for ID {vector_id}")
@@ -1652,6 +1660,13 @@ class OceanBaseVectorStore(VectorStoreBase):
                 for key, value in temp_record.items():
                     if key != self.primary_field and (vector is not None or key != self.vector_field):
                         update_data[key] = value
+
+            # Preserve existing sparse_embedding if not explicitly provided in payload
+            # This prevents intelligence_plugin updates from accidentally clearing sparse_embedding
+            if self.include_sparse and self.sparse_vector_field not in update_data:
+                if existing_sparse_embedding is not None:
+                    update_data[self.sparse_vector_field] = existing_sparse_embedding
+                    logger.debug(f"Preserving existing sparse_embedding for ID {vector_id}")
 
             # Update record
             self.obvector.upsert(
