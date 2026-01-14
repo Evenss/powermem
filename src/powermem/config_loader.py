@@ -89,7 +89,8 @@ def load_config_from_env() -> Dict[str, Any]:
             'text_field': os.getenv('OCEANBASE_TEXT_FIELD', 'document'),
             'metadata_field': os.getenv('OCEANBASE_METADATA_FIELD', 'metadata'),
             'vidx_name': os.getenv('OCEANBASE_VIDX_NAME', 'memories_vidx'),
-            'include_sparse': os.getenv('SPARSE_VECTOR_ENABLE', 'false').lower() == 'true'
+            'include_sparse': os.getenv('SPARSE_VECTOR_ENABLE', 'false').lower() == 'true',
+            'enable_native_hybrid': os.getenv('OCEANBASE_ENABLE_NATIVE_HYBRID', 'false').lower() == 'true'
         }
     elif db_provider == 'postgres':
         # PostgreSQL configuration (pgvector)

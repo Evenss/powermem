@@ -1108,7 +1108,8 @@ class Memory(MemoryBase):
                 run_id=run_id,
                 filters=filters,
                 limit=limit,
-                query=query  # Pass query text for hybrid search (vector + full-text + sparse vector)
+                query=query,  # Pass query text for hybrid search (vector + full-text + sparse vector)
+                threshold=threshold,  # Pass threshold to storage for native hybrid search condition check
             )
             
             # Process results with intelligence manager (only if enabled to avoid unnecessary calls)

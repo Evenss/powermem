@@ -71,6 +71,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             fts_weight: float = 0.5,
             sparse_weight: float = 0.25,
             reranker: Optional[Any] = None,
+            enable_native_hybrid: bool = False,
             **kwargs,
     ):
         """
@@ -101,6 +102,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             fts_weight (float): Weight for full-text search in hybrid search (default: 0.5).
             sparse_weight (Optional[float]): Weight for sparse vector search in hybrid search.
             reranker (Optional[Any]): Reranker model for fine ranking.
+            enable_native_hybrid (bool): Whether to enable OceanBase native hybrid search (DBMS_HYBRID_SEARCH.SEARCH).
         """
         self.normalize = normalize
         self.include_sparse = include_sparse
@@ -111,6 +113,7 @@ class OceanBaseVectorStore(VectorStoreBase):
         self.fts_weight = fts_weight
         self.sparse_weight = sparse_weight
         self.reranker = reranker
+        self.enable_native_hybrid = enable_native_hybrid
 
         # Validate fulltext parser
         if self.fulltext_parser not in constants.OCEANBASE_SUPPORTED_FULLTEXT_PARSERS:
@@ -170,6 +173,12 @@ class OceanBaseVectorStore(VectorStoreBase):
         # Initialize client
         self._create_client(**kwargs)
         assert self.obvector is not None
+
+        # Check if native hybrid search is supported by version and table type
+        if self.enable_native_hybrid:
+            if not OceanBaseUtil.check_native_hybrid_version_support(self.obvector, self.collection_name):
+                logger.warning("Falling back to application-level hybrid search.")
+                self.enable_native_hybrid = False
 
         # Autoconfigure vector index settings if enabled
         if self.auto_configure_vector_index:
@@ -241,6 +250,9 @@ class OceanBaseVectorStore(VectorStoreBase):
         
         If include_sparse is True and database supports sparse vector,
         the sparse_embedding column will be included in the table schema.
+        
+        If enable_native_hybrid is True, creates heap table (ORGANIZATION HEAP)
+        for native hybrid search support.
         """
         cols = [
             # Primary key - Snowflake ID (BIGINT without AUTO_INCREMENT)
@@ -304,14 +316,22 @@ class OceanBaseVectorStore(VectorStoreBase):
                     "Upgrade to seekdb or OceanBase >= 4.5.0 for sparse vector."
                 )
         
-        # Create table with vector indexes (both dense and sparse if configured)
-        self.obvector.create_table_with_index_params(
+        # Determine table options based on native hybrid search setting
+        table_kwargs = {}
+        if self.enable_native_hybrid:
+            table_kwargs['mysql_organization'] = 'heap'
+            logger.info(f"Creating heap table '{self.collection_name}' for native hybrid search support")
+        
+        # Create table with vector indexes using OceanBaseUtil method (supports **kwargs)
+        OceanBaseUtil.create_table_with_index_params(
+            obvector=self.obvector,
             table_name=self.collection_name,
             columns=cols,
             indexes=None,
             vidxs=vidx_params,
             fts_idxs=[fts_index_param] if fts_index_param is not None else None,
             partitions=None,
+            **table_kwargs,
         )
 
         logger.debug(f"Table '{self.collection_name}' created successfully")
@@ -798,11 +818,12 @@ class OceanBaseVectorStore(VectorStoreBase):
                vectors: List[List[float]],
                limit: int = 5,
                filters: Optional[Dict] = None,
-               sparse_embedding: Optional[Dict[int, float]] = None) -> list[OutputData]:
+               sparse_embedding: Optional[Dict[int, float]] = None,
+               threshold: Optional[float] = None) -> list[OutputData]:
         # Check if hybrid search is enabled, and we have query text
         # Full-text search is always enabled by default
         if self.hybrid_search and query:
-            return self._hybrid_search(query, vectors, limit, filters, sparse_embedding)
+            return self._hybrid_search(query, vectors, limit, filters, sparse_embedding, threshold=threshold)
         else:
             return self._vector_search(query, vectors, limit, filters)
 
@@ -1103,10 +1124,178 @@ class OceanBaseVectorStore(VectorStoreBase):
             # Return empty results on error rather than raising
             return []
 
+    def _native_hybrid_search(
+            self,
+            query: str,
+            vectors: List[List[float]],
+            limit: int,
+            filters: Optional[Dict],
+            sparse_embedding: Optional[Dict[int, float]] = None,
+            k: int = 60
+    ) -> List[OutputData]:
+        """
+        Perform hybrid search using OceanBase native DBMS_HYBRID_SEARCH.SEARCH.
+
+        This method leverages the database's native hybrid search capabilities to combine
+        full-text search and vector search (and optionally sparse vector search) with 
+        RRF (Reciprocal Rank Fusion) ranking.
+
+        Note: This method does NOT perform normalization or weight adjustments.
+        It uses the database's native RRF fusion.
+
+        Args:
+            query: Text query for full-text search
+            vectors: Query vector(s) for vector search
+            limit: Maximum number of results to return
+            filters: Filter conditions in mem0 format
+            sparse_embedding: Optional sparse vector for sparse search
+            k: RRF rank_constant parameter (default: 60)
+
+        Returns:
+            List[OutputData]: Search results sorted by relevance score
+        """
+        try:
+            # 1. Extract query vector (no normalization for native hybrid search)
+            if isinstance(vectors[0], (int, float)):
+                query_vector = vectors
+            else:
+                query_vector = vectors[0]
+
+            # 2. Convert filters to native format
+            native_filters = OceanBaseUtil.convert_filters_to_native_format(
+                filters, self.model_class, self.metadata_field
+            )
+
+            # 3. Build search parameters JSON
+            search_params = {
+                "query": {
+                    "bool": {
+                        "must": [
+                            {
+                                "query_string": {
+                                    "fields": [self.fulltext_field],
+                                    "query": query
+                                }
+                            }
+                        ]
+                    }
+                },
+                "rank": {
+                    "rrf": {
+                        "rank_window_size": limit,
+                        "rank_constant": k
+                    }
+                }
+            }
+
+            # Add filters if present
+            if native_filters:
+                search_params["query"]["bool"]["filter"] = native_filters
+
+            # 4. Build knn array (supports both dense and sparse vectors)
+            knn_list = [
+                {
+                    "field": self.vector_field,
+                    "k": limit,
+                    "query_vector": query_vector
+                }
+            ]
+
+            # Add filters to dense vector search if present
+            if native_filters:
+                knn_list[0]["filter"] = native_filters
+
+            # Add sparse vector search if sparse_embedding is provided
+            if sparse_embedding is not None and self.include_sparse:
+                sparse_vector_str = OceanBaseUtil.format_sparse_vector(sparse_embedding)
+                knn_list.append({
+                    "field": self.sparse_vector_field,
+                    "k": limit,
+                    "query_vector": sparse_vector_str
+                })
+
+            search_params["knn"] = knn_list
+
+            # 5. Execute native hybrid search with simplified SQL
+            body_str = json.dumps(search_params)
+            sql = text("SELECT DBMS_HYBRID_SEARCH.SEARCH(:index, :body_str)")
+
+            logger.debug(f"Executing native hybrid search on table: {self.collection_name}")
+            logger.debug(f"Search parameters: {body_str}")
+
+            with self.obvector.engine.connect() as conn:
+                with conn.begin():
+                    res = conn.execute(sql, {"index": self.collection_name, "body_str": body_str}).fetchone()
+                    result_json_str = res[0] if res else None
+
+            logger.debug(f"Native hybrid search returned: {len(result_json_str) if result_json_str else 0} chars")
+
+            # 6. Parse and return results
+            if not result_json_str:
+                logger.warning("Native hybrid search returned empty result")
+                return []
+
+            parsed_results = OceanBaseUtil.parse_native_hybrid_results(
+                result_json_str,
+                self.primary_field,
+                self.text_field,
+                self.metadata_field
+            )
+
+            # 7. Convert to OutputData objects
+            output_list = []
+            for doc in parsed_results:
+                metadata = {
+                    "user_id": doc["user_id"],
+                    "agent_id": doc["agent_id"],
+                    "run_id": doc["run_id"],
+                    "actor_id": doc["actor_id"],
+                    "hash": doc["hash"],
+                    "created_at": doc["created_at"],
+                    "updated_at": doc["updated_at"],
+                    "category": doc["category"],
+                    "metadata": OceanBaseUtil.parse_metadata(doc["metadata_json"])
+                }
+
+                output_list.append(
+                    self._create_output_data(doc["vector_id"], doc["text_content"], doc["score"], metadata)
+                )
+
+            logger.debug(f"Native hybrid search returned {len(output_list)} results")
+            return output_list
+
+        except Exception as e:
+            logger.error(f"Native hybrid search failed: {e}")
+            raise  # Re-raise to trigger fallback in _hybrid_search
+
     def _hybrid_search(self, query: str, vectors: List[List[float]], limit: int = 5, filters: Optional[Dict] = None,
                        sparse_embedding: Optional[Dict[int, float]] = None,
-                       fusion_method: str = "rrf", k: int = 60):
-        """Perform hybrid search combining vector, full-text, and sparse vector search with optional reranking."""
+                       fusion_method: str = "rrf", k: int = 60,
+                       threshold: Optional[float] = None):
+        """Perform hybrid search combining vector, full-text, and sparse vector search with optional reranking.
+        
+        When enable_native_hybrid is True and conditions are met, uses OceanBase native 
+        DBMS_HYBRID_SEARCH.SEARCH for better performance.
+        """
+        # Check if native hybrid search can be used:
+        # 1. enable_native_hybrid must be True
+        # 2. threshold must be None (native search doesn't support threshold filtering)
+        # 3. All filter fields must be in table columns
+        use_native = (
+            self.enable_native_hybrid 
+            and threshold is None
+            and OceanBaseUtil.check_filters_all_in_columns(filters, self.model_class)
+        )
+        
+        if use_native:
+            try:
+                logger.debug("Using OceanBase native hybrid search (DBMS_HYBRID_SEARCH.SEARCH)")
+                return self._native_hybrid_search(query, vectors, limit, filters, sparse_embedding, k)
+            except Exception as e:
+                logger.warning(f"Native hybrid search failed: {e}, falling back to application-level hybrid search")
+                # Fall through to application-level hybrid search
+        
+        # Application-level hybrid search
         # Determine candidate limit for reranking
         candidate_limit = limit * 3 if self.reranker else limit
 

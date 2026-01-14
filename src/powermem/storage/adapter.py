@@ -136,6 +136,7 @@ class StorageAdapter:
         filters: Optional[Dict[str, Any]] = None,
         limit: int = 30,
         query: Optional[str] = None,
+        threshold: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
         """Search for memories."""
         # Use the provided query embedding or generate one
@@ -167,13 +168,24 @@ class StorageAdapter:
         try:
             # Try OceanBase format first - pass query text for hybrid search
             search_query = query if query else ""
-            # Check if target_store.search supports sparse_embedding parameter
+            # Check if target_store.search supports sparse_embedding and threshold parameters
             import inspect
             search_sig = inspect.signature(target_store.search)
-            if 'sparse_embedding' in search_sig.parameters:
-                results = target_store.search(search_query, vectors=query_vector, limit=limit, filters=effective_filters, sparse_embedding=sparse_embedding)
-            else:
-                results = target_store.search(search_query, vectors=query_vector, limit=limit, filters=effective_filters)
+            search_params = search_sig.parameters
+            
+            # Build search kwargs based on supported parameters
+            search_kwargs = {
+                "query": search_query,
+                "vectors": query_vector,
+                "limit": limit,
+                "filters": effective_filters,
+            }
+            if 'sparse_embedding' in search_params:
+                search_kwargs["sparse_embedding"] = sparse_embedding
+            if 'threshold' in search_params:
+                search_kwargs["threshold"] = threshold
+            
+            results = target_store.search(**search_kwargs)
         except TypeError:
             # Fallback to SQLite format (doesn't support query text parameter)
             # Pass filters to ensure filtering works correctly
