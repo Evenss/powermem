@@ -67,7 +67,7 @@ config = {
 ### List Available Scripts
 
 ```python
-from scripts.script_manager import ScriptManager
+from script import ScriptManager
 
 # List all available scripts
 ScriptManager.list_scripts()
@@ -90,7 +90,7 @@ PowerMem Available Scripts
 ### View Script Details
 
 ```python
-from scripts.script_manager import ScriptManager
+from script import ScriptManager
 
 # View upgrade script details
 ScriptManager.info('upgrade-sparse-vector')
@@ -114,7 +114,7 @@ Parameters:
 
 ```python
 from powermem import auto_config
-from scripts.script_manager import ScriptManager
+from script import ScriptManager
 
 # Load configuration
 config = auto_config()
@@ -127,7 +127,7 @@ ScriptManager.run('upgrade-sparse-vector', config)
 ```
 Preparing to execute script: upgrade-sparse-vector
 Description: Add sparse vector support to OceanBase table (add sparse_embedding column and index)
-Loading module: scripts.upgrade_sparse_vector
+Loading module: script.scripts.upgrade_sparse_vector
 Executing script function: upgrade_sparse_vector
 Starting sparse vector upgrade for table 'memories'
 Adding sparse_embedding column to table 'memories'
@@ -159,7 +159,7 @@ After schema upgrade, the `sparse_embedding` column for historical data is empty
 ### View Migration Script Details
 
 ```python
-from scripts.script_manager import ScriptManager
+from script import ScriptManager
 
 # View migration script details
 ScriptManager.info('migrate-sparse-vector')
@@ -180,7 +180,7 @@ Before formal migration, it is recommended to test with dry-run mode first:
 
 ```python
 from powermem import Memory, auto_config
-from scripts.script_manager import ScriptManager
+from script import ScriptManager
 
 # Load configuration
 config = auto_config()
@@ -211,7 +211,7 @@ Total: [██████████████]  100.0% | 100/100
 
 ```python
 from powermem import Memory, auto_config
-from scripts.script_manager import ScriptManager
+from script import ScriptManager
 
 # Load configuration
 config = auto_config()
@@ -310,7 +310,7 @@ Complete Sparse Vector Migration Example
 Demonstrates how to upgrade existing tables and migrate historical data
 """
 from powermem import Memory, auto_config
-from scripts.script_manager import ScriptManager
+from script import ScriptManager
 import logging
 
 def main():
@@ -372,7 +372,7 @@ If you need to remove sparse vector support, you can run the downgrade script:
 
 ```python
 from powermem import auto_config
-from scripts.script_manager import ScriptManager
+from script import ScriptManager
 
 config = auto_config()
 

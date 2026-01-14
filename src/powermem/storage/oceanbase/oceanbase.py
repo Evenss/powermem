@@ -1832,7 +1832,7 @@ class OceanBaseVectorStore(VectorStoreBase):
         If include_sparse=True and database supports it, sparse vector will be included.
         For existing tables that need sparse vector support, use the upgrade script:
         
-            from scripts.script_manager import ScriptManager
+            from script import ScriptManager
             from powermem import auto_config
             config = auto_config()
             ScriptManager.run('upgrade-sparse-vector', config)

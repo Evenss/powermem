@@ -5,7 +5,7 @@ Provides Python API to manage and execute various maintenance and upgrade script
 
 Usage example:
     from powermem import auto_config, Memory
-    from scripts.script_manager import ScriptManager
+    from script import ScriptManager
     
     # List available scripts
     ScriptManager.list_scripts()
@@ -27,7 +27,7 @@ import inspect
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, get_type_hints
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -35,17 +35,20 @@ logger = logging.getLogger(__name__)
 class ScriptManager:
     """Script Manager - Used to execute maintenance and upgrade scripts"""
     
-    _default_config_path = "scripts/scripts_config.json"
+    @classmethod
+    def _get_config_path(cls) -> Path:
+        """Get the path to scripts_config.json relative to this module"""
+        return Path(__file__).parent / "scripts_config.json"
     
     @classmethod
     def _load_config(cls) -> Dict[str, Any]:
         """Load script configuration"""
-        config_path = Path(cls._default_config_path)
+        config_path = cls._get_config_path()
         
         if not config_path.exists():
             raise FileNotFoundError(
                 f"Configuration file not found: {config_path}\n"
-                f"Please ensure scripts_config.json exists in the scripts directory"
+                f"Please ensure scripts_config.json exists in the script package"
             )
         
         try:
@@ -250,14 +253,14 @@ class ScriptManager:
                 
                 if param_type_hint and 'Memory' in param_type_hint:
                     logger.info(f"  from powermem import Memory, auto_config")
-                    logger.info(f"  from scripts.script_manager import ScriptManager")
+                    logger.info(f"  from script import ScriptManager")
                     logger.info(f"  ")
                     logger.info(f"  config = auto_config()")
                     logger.info(f"  memory = Memory(config=config)")
                     logger.info(f"  ScriptManager.run('{script_name}', memory)")
                 else:
                     logger.info(f"  from powermem import auto_config")
-                    logger.info(f"  from scripts.script_manager import ScriptManager")
+                    logger.info(f"  from script import ScriptManager")
                     logger.info(f"  ")
                     logger.info(f"  config = auto_config()")
                     logger.info(f"  ScriptManager.run('{script_name}', config)")
@@ -298,7 +301,7 @@ class ScriptManager:
                 "param parameter is required\n"
                 "Example:\n"
                 "  from powermem import auto_config, Memory\n"
-                "  from scripts.script_manager import ScriptManager\n"
+                "  from script import ScriptManager\n"
                 "  config = auto_config()\n"
                 "  # For upgrade/downgrade:\n"
                 "  ScriptManager.run('upgrade-sparse-vector', config)\n"

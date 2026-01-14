@@ -177,7 +177,7 @@ Quick example:
 
 ```python
 from powermem import auto_config
-from scripts.script_manager import ScriptManager
+from script import ScriptManager
 
 # Load configuration
 config = auto_config()

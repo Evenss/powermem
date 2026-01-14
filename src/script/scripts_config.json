@@ -1,20 +1,20 @@
 {
   "scripts": {
     "upgrade-sparse-vector": {
-      "module": "scripts.upgrade_sparse_vector",
+      "module": "script.scripts.upgrade_sparse_vector",
       "function": "upgrade_sparse_vector",
       "description": "Add sparse vector support to OceanBase table (add sparse_embedding column and index)",
       "category": "upgrade"
     },
     "downgrade-sparse-vector": {
-      "module": "scripts.upgrade_sparse_vector",
+      "module": "script.scripts.upgrade_sparse_vector",
       "function": "downgrade_sparse_vector",
       "description": "Remove sparse vector support from OceanBase table (Warning: will delete all sparse vector data)",
       "category": "downgrade",
       "destructive": true
     },
     "migrate-sparse-vector": {
-      "module": "scripts.migrate_sparse_vector",
+      "module": "script.scripts.migrate_sparse_vector",
       "function": "migrate_sparse_vector",
       "description": "Migrate historical data to add sparse vector embeddings",
       "category": "migration"
@@ -27,4 +27,3 @@
     "migration": "Migration Scripts - Data migration or format conversion"
   }
 }
-

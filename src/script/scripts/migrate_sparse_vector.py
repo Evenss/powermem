@@ -5,7 +5,7 @@ Used to migrate historical data to sparse vector format.
 
 Usage:
     from powermem import Memory, auto_config
-    from scripts.script_manager import ScriptManager
+    from script import ScriptManager
     
     config = auto_config()
     memory = Memory(config=config)
@@ -21,7 +21,7 @@ from typing import List, Optional, Any, Dict
 
 from sqlalchemy import text
 
-from src.powermem.utils import OceanBaseUtil
+from powermem.utils import OceanBaseUtil
 
 logger = logging.getLogger(__name__)
 
@@ -531,7 +531,7 @@ def migrate_sparse_vector(
     Example:
         ```python
         from powermem import Memory, auto_config
-        from scripts.script_manager import ScriptManager
+        from script import ScriptManager
         
         config = auto_config()
         memory = Memory(config=config)
@@ -539,7 +539,7 @@ def migrate_sparse_vector(
         ScriptManager.run('migrate-sparse-vector', memory, batch_size=1000, workers=3)
         
         # Or call directly
-        from scripts.migrate_sparse_vector import migrate_sparse_vector
+        from script.scripts.migrate_sparse_vector import migrate_sparse_vector
         migrate_sparse_vector(memory, workers=3)
         ```
     """

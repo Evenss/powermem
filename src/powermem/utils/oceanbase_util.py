@@ -408,7 +408,7 @@ class OceanBaseUtil:
                 f"Sparse vector support disabled: Table '{collection_name}' does not have sparse_embedding column. "
                 f"Please run the upgrade script to enable sparse vector support:\n"
                 f"  from powermem import auto_config\n"
-                f"  from scripts.script_manager import ScriptManager\n"
+                f"  from script import ScriptManager\n"
                 f"  config = auto_config()\n"
                 f"  ScriptManager.run('upgrade-sparse-vector', config)"
             )
@@ -420,7 +420,7 @@ class OceanBaseUtil:
                 f"Sparse vector support disabled: Table '{collection_name}' does not have sparse_embedding_idx index. "
                 f"Please run the upgrade script to enable sparse vector support:\n"
                 f"  from powermem import auto_config\n"
-                f"  from scripts.script_manager import ScriptManager\n"
+                f"  from script import ScriptManager\n"
                 f"  config = auto_config()\n"
                 f"  ScriptManager.run('upgrade-sparse-vector', config)"
             )
