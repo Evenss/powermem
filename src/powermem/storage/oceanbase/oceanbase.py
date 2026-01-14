@@ -1288,8 +1288,7 @@ class OceanBaseVectorStore(VectorStoreBase):
                 return self._native_hybrid_search(query, vectors, limit, filters, sparse_embedding, k)
             except Exception as e:
                 logger.warning(f"Native hybrid search failed: {e}, falling back to application-level hybrid search")
-                # Fall through to application-level hybrid search
-        
+
         # Application-level hybrid search
         # Determine candidate limit for reranking
         candidate_limit = limit * 3 if self.reranker else limit
