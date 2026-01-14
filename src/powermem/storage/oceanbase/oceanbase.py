@@ -1220,15 +1220,10 @@ class OceanBaseVectorStore(VectorStoreBase):
             body_str = json.dumps(search_params)
             sql = text("SELECT DBMS_HYBRID_SEARCH.SEARCH(:index, :body_str)")
 
-            logger.debug(f"Executing native hybrid search on table: {self.collection_name}")
-            logger.debug(f"Search parameters: {body_str}")
-
             with self.obvector.engine.connect() as conn:
                 with conn.begin():
                     res = conn.execute(sql, {"index": self.collection_name, "body_str": body_str}).fetchone()
                     result_json_str = res[0] if res else None
-
-            logger.debug(f"Native hybrid search returned: {len(result_json_str) if result_json_str else 0} chars")
 
             # 6. Parse and return results
             if not result_json_str:
