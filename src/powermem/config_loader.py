@@ -88,7 +88,8 @@ def load_config_from_env() -> Dict[str, Any]:
             'vector_field': os.getenv('OCEANBASE_VECTOR_FIELD', 'embedding'),
             'text_field': os.getenv('OCEANBASE_TEXT_FIELD', 'document'),
             'metadata_field': os.getenv('OCEANBASE_METADATA_FIELD', 'metadata'),
-            'vidx_name': os.getenv('OCEANBASE_VIDX_NAME', 'memories_vidx')
+            'vidx_name': os.getenv('OCEANBASE_VIDX_NAME', 'memories_vidx'),
+            'include_sparse': os.getenv('SPARSE_VECTOR_ENABLE', 'false').lower() == 'true'
         }
     elif db_provider == 'postgres':
         # PostgreSQL configuration (pgvector)
@@ -203,7 +204,8 @@ def load_config_from_env() -> Dict[str, Any]:
             'reinforcement_factor': float(os.getenv('INTELLIGENT_MEMORY_REINFORCEMENT_FACTOR', '0.3')),
             'working_threshold': float(os.getenv('INTELLIGENT_MEMORY_WORKING_THRESHOLD', '0.3')),
             'short_term_threshold': float(os.getenv('INTELLIGENT_MEMORY_SHORT_TERM_THRESHOLD', '0.6')),
-            'long_term_threshold': float(os.getenv('INTELLIGENT_MEMORY_LONG_TERM_THRESHOLD', '0.8'))
+            'long_term_threshold': float(os.getenv('INTELLIGENT_MEMORY_LONG_TERM_THRESHOLD', '0.8')),
+            'fallback_to_simple_add': os.getenv('INTELLIGENT_MEMORY_FALLBACK_TO_SIMPLE_ADD', 'false').lower() == 'true'
         },
         'agent_memory': {
             'enabled': os.getenv('AGENT_ENABLED', 'true').lower() == 'true',
@@ -248,6 +250,21 @@ def load_config_from_env() -> Dict[str, Any]:
             'model_override': os.getenv('QUERY_REWRITE_MODEL_OVERRIDE'),
         }
     }
+    
+    # Build Sparse Embedder config (if enabled for OceanBase)
+    sparse_embedder_provider = os.getenv('SPARSE_EMBEDDER_PROVIDER')
+    if sparse_embedder_provider:
+        sparse_embedder_config = {
+            'api_key': os.getenv('SPARSE_EMBEDDER_API_KEY'),
+            'model': os.getenv('SPARSE_EMBEDDER_MODEL'),
+            'base_url': os.getenv('SPARSE_EMBEDDING_BASE_URL',''),
+            'embedding_dims': int(os.getenv('SPARSE_EMBEDDER_DIMS', '1536')),
+        }
+        
+        config['sparse_embedder'] = {
+            'provider': sparse_embedder_provider,
+            'config': sparse_embedder_config
+        }
     
     # Build graph_store config if enabled
     graph_store_enabled = os.getenv('GRAPH_STORE_ENABLED', 'false').lower() == 'true'
