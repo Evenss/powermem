@@ -1618,9 +1618,11 @@ class OceanBaseVectorStore(VectorStoreBase):
         """Update a vector and its payload."""
         try:
             # Get existing record to preserve fields not being updated
-            # Include sparse_vector_field to preserve sparse_embedding if not explicitly updated
+            # Always try to get sparse_vector_field to preserve it even when include_sparse=False
+            # This prevents accidentally clearing sparse_embedding when using a non-sparse Memory instance
             output_columns = [self.vector_field]
-            if self.include_sparse:
+            has_sparse_column = OceanBaseUtil.check_column_exists(self.obvector, self.collection_name, self.sparse_vector_field)
+            if has_sparse_column:
                 output_columns.append(self.sparse_vector_field)
             
             existing_result = self.obvector.get(
@@ -1641,7 +1643,7 @@ class OceanBaseVectorStore(VectorStoreBase):
 
             # Extract existing values from row
             existing_vector = existing_rows[0][0] if existing_rows[0] else None
-            existing_sparse_embedding = existing_rows[0][1] if self.include_sparse and len(existing_rows[0]) > 1 else None
+            existing_sparse_embedding = existing_rows[0][1] if has_sparse_column and len(existing_rows[0]) > 1 else None
 
             if vector is not None:
                 update_data[self.vector_field] = (
@@ -1664,7 +1666,8 @@ class OceanBaseVectorStore(VectorStoreBase):
 
             # Preserve existing sparse_embedding if not explicitly provided in payload
             # This prevents intelligence_plugin updates from accidentally clearing sparse_embedding
-            if self.include_sparse and self.sparse_vector_field not in update_data:
+            # Check column existence instead of include_sparse to protect data even when sparse is disabled
+            if has_sparse_column and self.sparse_vector_field not in update_data:
                 if existing_sparse_embedding is not None:
                     update_data[self.sparse_vector_field] = existing_sparse_embedding
                     logger.debug(f"Preserving existing sparse_embedding for ID {vector_id}")
