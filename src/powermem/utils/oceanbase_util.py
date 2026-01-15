@@ -347,13 +347,13 @@ class OceanBaseUtil:
     def check_table_is_heap_or_not_exists(obvector, table_name: str) -> bool:
         """
         Check if the table is a heap table (ORGANIZATION HEAP) or doesn't exist.
-        
+
         DBMS_HYBRID_SEARCH.SEARCH requires heap table, not index-organized table.
-        
+
         Args:
             obvector: The ObVecClient instance.
             table_name: The name of the table.
-            
+
         Returns:
             True if table is heap table or doesn't exist, False if it's index-organized table.
         """
@@ -369,7 +369,7 @@ class OceanBaseUtil:
                     # Table doesn't exist, will be created as heap table
                     logger.debug(f"Table '{table_name}' doesn't exist, will be created as heap table")
                     return True
-                
+
                 # Check table organization type using SHOW CREATE TABLE
                 result = conn.execute(text(f"SHOW CREATE TABLE `{table_name}`"))
                 row = result.fetchone()
@@ -540,28 +540,28 @@ class OceanBaseUtil:
     def check_filters_all_in_columns(filters: Optional[Dict], model_class) -> bool:
         """
         Check if all filter fields are in standard table columns.
-        
+
         This is used to determine if native hybrid search can be used.
         Native hybrid search doesn't support JSON path filtering well,
         so we only use it when all filters are on actual table columns.
-        
+
         Args:
             filters: The filter conditions in mem0 format.
             model_class: SQLAlchemy ORM model class with __table__ attribute.
-            
+
         Returns:
             True if all filter fields are in table columns, False otherwise.
         """
         if not filters:
             return True
-        
+
         # Get column names from model_class
         try:
             table_columns = set(model_class.__table__.c.keys())
         except AttributeError:
             logger.warning("model_class does not have __table__ attribute, native hybrid search disabled")
             return False
-        
+
         def check_filter_keys(filter_dict: Dict) -> bool:
             """Recursively check if all keys are in table columns."""
             for key, value in filter_dict.items():
@@ -577,12 +577,12 @@ class OceanBaseUtil:
                         logger.debug(f"Filter field '{key}' not in table columns, native hybrid search disabled")
                         return False
             return True
-        
+
         return check_filter_keys(filters)
 
     @staticmethod
     def convert_filters_to_native_format(
-        filters: Optional[Dict], 
+        filters: Optional[Dict],
         model_class,
         metadata_field: str = "metadata"
     ) -> List[Dict]:

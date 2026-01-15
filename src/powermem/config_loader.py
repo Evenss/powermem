@@ -255,12 +255,12 @@ def load_config_from_env() -> Dict[str, Any]:
             'base_url': os.getenv('SPARSE_EMBEDDING_BASE_URL',''),
             'embedding_dims': int(os.getenv('SPARSE_EMBEDDER_DIMS', '1536')),
         }
-        
+
         config['sparse_embedder'] = {
             'provider': sparse_embedder_provider,
             'config': sparse_embedder_config
         }
-    
+
     # Build graph_store config if enabled
     graph_store_enabled = os.getenv('GRAPH_STORE_ENABLED', 'false').lower() == 'true'
     if graph_store_enabled:
