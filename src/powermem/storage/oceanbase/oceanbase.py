@@ -322,9 +322,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             table_kwargs['mysql_organization'] = 'heap'
             logger.info(f"Creating heap table '{self.collection_name}' for native hybrid search support")
         
-        # Create table with vector indexes using OceanBaseUtil method (supports **kwargs)
-        OceanBaseUtil.create_table_with_index_params(
-            obvector=self.obvector,
+        self.obvector.create_table_with_index_params(
             table_name=self.collection_name,
             columns=cols,
             indexes=None,
