@@ -1284,7 +1284,22 @@ class OceanBaseVectorStore(VectorStoreBase):
         if use_native:
             try:
                 logger.debug("Using OceanBase native hybrid search (DBMS_HYBRID_SEARCH.SEARCH)")
-                return self._native_hybrid_search(query, vectors, limit, filters, sparse_embedding, k)
+                native_candidate_limit = limit * 2
+                native_results = self._native_hybrid_search(
+                    query, vectors, native_candidate_limit, filters, sparse_embedding, k
+                )
+
+                # Fine ranking (optional): use reranker for precision sorting
+                if self.reranker and query and native_results:
+                    try:
+                        final_results = self._apply_rerank(query, native_results, limit)
+                        logger.debug(f"Native results reranked, final results: {len(final_results)}")
+                        return final_results
+                    except Exception as e:
+                        logger.warning(f"Native rerank failed, falling back to native coarse ranking: {e}")
+                        return native_results[:limit]
+
+                return native_results[:limit]
             except Exception as e:
                 logger.warning(f"Native hybrid search failed: {e}, falling back to application-level hybrid search")
 
