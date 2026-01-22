@@ -13,6 +13,7 @@ from pydantic_settings import BaseSettings
 
 from powermem.integrations.embeddings.config.base import BaseEmbedderConfig
 from powermem.integrations.embeddings.config.providers import CustomEmbeddingConfig
+from powermem.integrations.llm.config.base import BaseLLMConfig
 from powermem.settings import _DEFAULT_ENV_FILE, settings_config
 
 
@@ -289,6 +290,18 @@ class DatabaseSettings(_BasePowermemSettings):
 
 
 class LLMSettings(_BasePowermemSettings):
+    """
+    Unified LLM configuration settings.
+    
+    This class provides a common interface for configuring LLM providers.
+    It only contains fields that are common across all providers.
+    Provider-specific fields (e.g., dashscope_base_url for Qwen) should be
+    set via environment variables and will be loaded by the respective provider config classes.
+    
+    Design rationale: This follows the same pattern as EmbeddingSettings,
+    keeping the unified settings simple and delegating provider-specific
+    configuration to the provider config classes.
+    """
     model_config = settings_config("LLM_")
 
     provider: str = Field(default="qwen")
@@ -305,83 +318,54 @@ class LLMSettings(_BasePowermemSettings):
     max_tokens: int = Field(default=1000)
     top_p: float = Field(default=0.8)
     top_k: int = Field(default=50)
-    enable_search: bool = Field(default=False)
-    qwen_base_url: str = Field(
-        default="https://dashscope.aliyuncs.com/api/v1",
-        validation_alias=AliasChoices("QWEN_LLM_BASE_URL"),
-    )
-    openai_base_url: str = Field(
-        default="https://api.openai.com/v1",
-        validation_alias=AliasChoices("OPENAI_LLM_BASE_URL"),
-    )
-    siliconflow_base_url: str = Field(
-        default="https://api.siliconflow.cn/v1",
-        validation_alias=AliasChoices("SILICONFLOW_LLM_BASE_URL"),
-    )
-    ollama_base_url: Optional[str] = Field(
-        default=None,
-        validation_alias=AliasChoices("OLLAMA_LLM_BASE_URL"),
-    )
-    vllm_base_url: Optional[str] = Field(
-        default=None,
-        validation_alias=AliasChoices("VLLM_LLM_BASE_URL"),
-    )
-    anthropic_base_url: str = Field(
-        default="https://api.anthropic.com",
-        validation_alias=AliasChoices("ANTHROPIC_LLM_BASE_URL"),
-    )
-    deepseek_base_url: str = Field(
-        default="https://api.deepseek.com",
-        validation_alias=AliasChoices("DEEPSEEK_LLM_BASE_URL"),
-    )
-
-    def _apply_provider_config(
-        self, provider: str, config: Dict[str, Any]
-    ) -> None:
-        configurer = getattr(self, f"_configure_{provider}", None)
-        if callable(configurer):
-            configurer(config)
-
-    def _configure_qwen(self, config: Dict[str, Any]) -> None:
-        config["dashscope_base_url"] = self.qwen_base_url
-        config["enable_search"] = self.enable_search
-
-    def _configure_openai(self, config: Dict[str, Any]) -> None:
-        config["openai_base_url"] = self.openai_base_url
-
-    def _configure_siliconflow(self, config: Dict[str, Any]) -> None:
-        config["openai_base_url"] = self.siliconflow_base_url
-
-    def _configure_ollama(self, config: Dict[str, Any]) -> None:
-        if self.ollama_base_url is not None:
-            config["ollama_base_url"] = self.ollama_base_url
-
-    def _configure_vllm(self, config: Dict[str, Any]) -> None:
-        if self.vllm_base_url is not None:
-            config["vllm_base_url"] = self.vllm_base_url
-
-    def _configure_anthropic(self, config: Dict[str, Any]) -> None:
-        config["anthropic_base_url"] = self.anthropic_base_url
-
-    def _configure_deepseek(self, config: Dict[str, Any]) -> None:
-        config["deepseek_base_url"] = self.deepseek_base_url
 
     def to_config(self) -> Dict[str, Any]:
+        """
+        Convert settings to LLM configuration dictionary.
+        
+        This method:
+        1. Gets the appropriate provider config class
+        2. Creates an instance (loading provider-specific fields from environment)
+        3. Overrides with explicitly set common fields from this settings object
+        4. Returns the final configuration
+        
+        Provider-specific fields (e.g., dashscope_base_url, enable_search) are
+        automatically loaded from environment variables by the provider config class.
+        """
         llm_provider = self.provider.lower()
+
+        # Determine model name
         llm_model = self.model
         if llm_model is None:
             llm_model = "qwen-plus" if llm_provider == "qwen" else "gpt-4o-mini"
 
-        llm_config = {
-            "api_key": self.api_key,
-            "model": llm_model,
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
-            "top_p": self.top_p,
-            "top_k": self.top_k,
-        }
+        # 1. Get provider config class from registry
+        config_cls = (
+            BaseLLMConfig.get_provider_config_cls(llm_provider)
+            or BaseLLMConfig  # fallback to base config
+        )
 
-        self._apply_provider_config(llm_provider, llm_config)
+        # 2. Create provider settings from environment variables
+        # Provider-specific fields are automatically loaded here
+        provider_settings = config_cls()
+
+        # 3. Collect common fields to override
+        overrides = {}
+        for field in ("api_key", "temperature", "max_tokens", "top_p", "top_k"):
+            if field in self.model_fields_set:
+                value = getattr(self, field)
+                if value is not None:
+                    overrides[field] = value
+
+        # Always set model
+        overrides["model"] = llm_model
+
+        # 4. Update configuration with overrides
+        if overrides:
+            provider_settings = provider_settings.model_copy(update=overrides)
+
+        # 5. Export to dict
+        llm_config = provider_settings.model_dump(exclude_none=True)
 
         return {"provider": llm_provider, "config": llm_config}
 
