@@ -239,12 +239,12 @@ class Memory(MemoryBase):
         if self.storage_type.lower() == 'oceanbase' and include_sparse:
             sparse_config_obj = None
             sparse_embedder_provider = None
-            
+
             if self.memory_config and hasattr(self.memory_config, 'sparse_embedder') and self.memory_config.sparse_embedder:
                 sparse_config_obj = self.memory_config.sparse_embedder
             elif self.config.get('sparse_embedder'):
                 sparse_config_obj = self.config.get('sparse_embedder')
-            
+
             if sparse_config_obj:
                 try:
                     # Handle SparseEmbedderConfig (BaseModel with provider and config) or dict format
@@ -260,13 +260,13 @@ class Memory(MemoryBase):
                         logger.warning(f"Unknown sparse_embedder config format: {type(sparse_config_obj)}. Expected SparseEmbedderConfig or dict with 'provider' and 'config' keys.")
                         sparse_embedder_provider = None
                         config_dict = {}
-                    
+
                     if sparse_embedder_provider:
                         self.sparse_embedder = SparseEmbedderFactory.create(sparse_embedder_provider, config_dict)
                         logger.info(f"Sparse embedder initialized: {sparse_embedder_provider}")
                 except Exception as e:
                     logger.warning(f"Failed to initialize sparse embedder: {e}")
-        
+
         # Initialize storage adapter with embedding service and sparse embedder service
         # Automatically select adapter based on sub_stores configuration
         sub_stores_list = self.config.get('sub_stores', [])
@@ -736,7 +736,7 @@ class Memory(MemoryBase):
         # Get intelligent memory config to check fallback setting
         intelligent_config = self._get_intelligent_memory_config()
         fallback_to_simple = intelligent_config.get("fallback_to_simple_add", False)
-        
+
         # Step 1: Extract facts from messages
         logger.info("Extracting facts from messages...")
         facts = self._extract_facts(messages)
@@ -1126,7 +1126,8 @@ class Memory(MemoryBase):
                 run_id=run_id,
                 filters=filters,
                 limit=limit,
-                query=query  # Pass query text for hybrid search (vector + full-text + sparse vector)
+                query=query,  # Pass query text for hybrid search (vector + full-text + sparse vector)
+                threshold=threshold,  # Pass threshold to storage for native hybrid search condition check
             )
             
             # Process results with intelligence manager (only if enabled to avoid unnecessary calls)
@@ -1154,18 +1155,18 @@ class Memory(MemoryBase):
             transformed_results = []
             for result in processed_results:
                 score = result.get("score", 0.0)
-                
+
                 # Get quality score for threshold filtering
                 # Quality score represents absolute similarity quality (0-1 range)
                 # It's calculated from weighted average of all search paths' similarity scores
                 metadata = result.get("metadata", {})
                 quality_score = metadata.get("_quality_score")
-                
+
                 # If quality_score is not available (e.g., from older data or non-hybrid search),
                 # fall back to using the ranking score
                 if quality_score is None:
                     quality_score = score
-                
+
                 # Apply threshold filtering using quality score
                 # Only include results if threshold is None or quality_score >= threshold
                 if threshold is not None and quality_score < threshold:

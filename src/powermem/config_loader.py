@@ -201,6 +201,10 @@ class DatabaseSettings(_BasePowermemSettings):
         default=False,
         validation_alias=AliasChoices("SPARSE_VECTOR_ENABLE"),
     )
+    enable_native_hybrid: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("OCEANBASE_ENABLE_NATIVE_HYBRID"),
+    )
     postgres_collection: str = Field(
         default="memories",
         validation_alias=AliasChoices("POSTGRES_COLLECTION"),
@@ -258,6 +262,7 @@ class DatabaseSettings(_BasePowermemSettings):
             "metadata_field": self.oceanbase_metadata_field,
             "vidx_name": self.oceanbase_vidx_name,
             "include_sparse": self.oceanbase_include_sparse,
+            "enable_native_hybrid": self.enable_native_hybrid,
         }
 
     def _build_postgres_config(self) -> Dict[str, Any]:
@@ -823,7 +828,7 @@ def load_config_from_env() -> Dict[str, Any]:
     Load configuration from environment variables.
 
     Deprecated for direct use: prefer `auto_config()` or `create_memory()`.
-    
+
     This function reads configuration from environment variables and builds a config dictionary.
     You can use this when you have .env file set up to avoid manually building config dict.
     
@@ -897,7 +902,7 @@ def create_config(
 
     Deprecated: prefer `auto_config()` or `create_memory()` unless you
     need a minimal manual config.
-    
+
     Args:
         database_provider: Database provider ('sqlite', 'oceanbase', 'postgres')
         llm_provider: LLM provider ('qwen', 'openai', etc.)
@@ -991,7 +996,7 @@ def validate_config(config: Dict[str, Any]) -> bool:
     Validate a configuration dictionary.
 
     Deprecated for new code paths: prefer `create_memory()` or `auto_config()`.
-    
+
     Args:
         config: Configuration dictionary to validate
         
@@ -1030,7 +1035,7 @@ def auto_config() -> Dict[str, Any]:
     It automatically loads .env file and returns the config.
 
     Preferred entrypoint for configuration loading.
-    
+
     Returns:
         Configuration dictionary from environment variables
         
