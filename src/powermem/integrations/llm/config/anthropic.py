@@ -21,6 +21,7 @@ class AnthropicConfig(BaseLLMConfig):
     api_key: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices(
+            "api_key",
             "LLM_API_KEY",
             "ANTHROPIC_API_KEY",
         ),

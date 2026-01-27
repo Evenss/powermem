@@ -22,6 +22,7 @@ class SiliconFlowConfig(OpenAIConfig):
     api_key: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices(
+            "api_key",
             "LLM_API_KEY",
             "OPENAI_API_KEY",
             "SILICONFLOW_API_KEY",

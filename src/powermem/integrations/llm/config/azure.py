@@ -21,6 +21,7 @@ class AzureOpenAIConfig(BaseLLMConfig):
     api_key: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices(
+            "api_key",
             "LLM_API_KEY",
             "AZURE_OPENAI_API_KEY",
             "AZURE_API_KEY",

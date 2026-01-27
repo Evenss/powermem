@@ -21,6 +21,7 @@ class DeepSeekConfig(BaseLLMConfig):
     api_key: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices(
+            "api_key",
             "LLM_API_KEY",
             "DEEPSEEK_API_KEY",
         ),

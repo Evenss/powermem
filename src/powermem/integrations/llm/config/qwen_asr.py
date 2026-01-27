@@ -21,6 +21,7 @@ class QwenASRConfig(BaseLLMConfig):
     api_key: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices(
+            "api_key",
             "LLM_API_KEY",
             "QWEN_API_KEY",
             "DASHSCOPE_API_KEY",

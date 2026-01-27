@@ -127,3 +127,18 @@ class BaseLLMConfig(BaseSettings):
         """Initialize http_client after model creation."""
         if self.http_client_proxies and not self.http_client:
             self.http_client = httpx.Client(proxies=self.http_client_proxies)
+
+    def to_component_dict(self) -> Dict[str, Any]:
+        """
+        Convert config to component dictionary format.
+        
+        This method is used by MemoryConfig.to_dict() to serialize
+        LLM configuration in a consistent format.
+        
+        Returns:
+            Dict with 'provider' and 'config' keys
+        """
+        return {
+            "provider": self._provider_name,
+            "config": self.model_dump(exclude_none=True)
+        }

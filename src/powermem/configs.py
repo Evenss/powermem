@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field
 from powermem.integrations.embeddings.config.base import BaseEmbedderConfig
 from powermem.integrations.embeddings.config.providers import OpenAIEmbeddingConfig
 from powermem.integrations.embeddings.config.sparse_base import SparseEmbedderConfig
-from powermem.integrations.llm import LlmConfig
+from powermem.integrations.llm.config.base import BaseLLMConfig
+from powermem.integrations.llm.config.qwen import QwenConfig
 from powermem.storage.configs import VectorStoreConfig, GraphStoreConfig
 from powermem.integrations.rerank.configs import RerankConfig
 
@@ -198,9 +199,9 @@ class MemoryConfig(BaseModel):
         description="Configuration for the vector store",
         default_factory=VectorStoreConfig,
     )
-    llm: LlmConfig = Field(
+    llm: BaseLLMConfig = Field(
         description="Configuration for the language model",
-        default_factory=LlmConfig,
+        default_factory=QwenConfig,
     )
     embedder: BaseEmbedderConfig = Field(
         description="Configuration for the embedding model",
@@ -254,7 +255,7 @@ class MemoryConfig(BaseModel):
         description="Configuration for application logging",
         default=None,
     )
-    audio_llm: Optional[LlmConfig] = Field(
+    audio_llm: Optional[BaseLLMConfig] = Field(
         description="Configuration for audio language model",
         default=None,
     )

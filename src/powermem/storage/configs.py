@@ -8,7 +8,7 @@ from typing import Dict, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
 
-from powermem.integrations.llm.configs import LLMConfig
+from powermem.integrations.llm.config.base import BaseLLMConfig
 from powermem.storage.config.oceanbase import OceanBaseGraphConfig
 from powermem.storage.factory import VectorStoreFactory
 
@@ -109,7 +109,7 @@ class GraphStoreConfig(BaseModel):
         description="Configuration for the specific data store",
         default=None
     )
-    llm: Optional[LLMConfig] = Field(
+    llm: Optional[BaseLLMConfig] = Field(
         description="LLM configuration for querying the graph store",
         default=None
     )

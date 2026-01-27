@@ -23,6 +23,7 @@ class ZaiConfig(BaseLLMConfig):
     api_key: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices(
+            "api_key",
             "LLM_API_KEY",
             "ZAI_API_KEY",
             "ZHIPU_API_KEY",

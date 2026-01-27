@@ -21,6 +21,7 @@ class GeminiConfig(BaseLLMConfig):
     api_key: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices(
+            "api_key",
             "LLM_API_KEY",
             "GEMINI_API_KEY",
             "GOOGLE_API_KEY",
