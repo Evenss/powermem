@@ -14,7 +14,7 @@ from powermem.integrations.embeddings.config.sparse_base import SparseEmbedderCo
 from powermem.integrations.llm.config.base import BaseLLMConfig
 from powermem.integrations.llm.config.qwen import QwenConfig
 from powermem.storage.configs import VectorStoreConfig, GraphStoreConfig
-from powermem.integrations.rerank.configs import RerankConfig
+from powermem.integrations.rerank.config.base import BaseRerankConfig
 
 
 class IntelligentMemoryConfig(BaseModel):
@@ -211,7 +211,7 @@ class MemoryConfig(BaseModel):
         description="Configuration for the graph",
         default_factory=GraphStoreConfig,
     )
-    reranker: Optional[RerankConfig] = Field(
+    reranker: Optional[BaseRerankConfig] = Field(
         description="Configuration for the reranker",
         default=None,
     )
@@ -277,14 +277,14 @@ class MemoryConfig(BaseModel):
         if self.logging is None:
             self.logging = LoggingConfig()
         if self.reranker is None:
-            self.reranker = RerankConfig()
+            self.reranker = BaseRerankConfig()
         if self.query_rewrite is None:
             self.query_rewrite = QueryRewriteConfig()
 
     def to_dict(self) -> Dict[str, Any]:
         result = self.model_dump(exclude_none=True)
 
-        for field in ['embedder', 'llm', 'vector_store']:
+        for field in ['embedder', 'llm', 'vector_store', 'reranker']:
             obj = getattr(self, field, None)
             if obj and hasattr(obj, 'to_component_dict'):
                 result[field] = obj.to_component_dict()

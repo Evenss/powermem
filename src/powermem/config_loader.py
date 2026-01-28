@@ -486,16 +486,50 @@ class RerankerSettings(_BasePowermemSettings):
     provider: str = Field(default="qwen")
     model: Optional[str] = Field(default=None)
     api_key: Optional[str] = Field(default=None)
+    api_base_url: Optional[str] = Field(default=None)
+    top_n: Optional[int] = Field(default=None)
 
     def to_config(self) -> Dict[str, Any]:
-        return {
-            "enabled": self.enabled,
-            "provider": self.provider,
-            "config": {
-                "model": self.model,
-                "api_key": self.api_key,
-            },
-        }
+        """
+        Convert settings to Rerank configuration dictionary.
+        
+        This method:
+        1. Gets the appropriate provider config class
+        2. Creates an instance (loading provider-specific fields from environment)
+        3. Overrides with explicitly set fields from this settings object
+        4. Returns the final configuration
+        
+        Provider-specific fields (e.g., api_base_url) are automatically loaded
+        from environment variables by the provider config class.
+        """
+        from powermem.integrations.rerank.config.base import BaseRerankConfig
+        
+        rerank_provider = self.provider.lower()
+        
+        # 1. Get provider config class from registry
+        config_cls = (
+            BaseRerankConfig.get_provider_config_cls(rerank_provider)
+            or BaseRerankConfig  # fallback to base config
+        )
+        
+        # 2. Create provider settings from environment variables
+        # Provider-specific fields are automatically loaded here
+        provider_settings = config_cls()
+        
+        # 3. Collect fields to override
+        overrides = {}
+        for field in ("enabled", "model", "api_key", "api_base_url", "top_n"):
+            if field in self.model_fields_set:
+                value = getattr(self, field)
+                if value is not None:
+                    overrides[field] = value
+        
+        # 4. Update configuration with overrides
+        if overrides:
+            provider_settings = provider_settings.model_copy(update=overrides)
+        
+        # 5. Export using to_component_dict() to match RerankConfig structure
+        return provider_settings.to_component_dict()
 
 
 class QueryRewriteSettings(_BasePowermemSettings):
