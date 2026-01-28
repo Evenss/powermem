@@ -110,188 +110,39 @@ class DatabaseSettings(_BasePowermemSettings):
     model_config = settings_config()
 
     provider: str = Field(
-        default="oceanbase",
+        default="sqlite",
         validation_alias=AliasChoices("DATABASE_PROVIDER"),
     )
-    database_sslmode: Optional[str] = Field(
-        default=None,
-        validation_alias=AliasChoices("DATABASE_SSLMODE"),
-    )
-    database_pool_size: Optional[int] = Field(
-        default=None,
-        validation_alias=AliasChoices("DATABASE_POOL_SIZE"),
-    )
-    database_max_overflow: Optional[int] = Field(
-        default=None,
-        validation_alias=AliasChoices("DATABASE_MAX_OVERFLOW"),
-    )
-    sqlite_path: str = Field(
-        default="./data/powermem_dev.db",
-        validation_alias=AliasChoices("SQLITE_PATH"),
-    )
-    sqlite_collection: str = Field(
-        default="memories",
-        validation_alias=AliasChoices("SQLITE_COLLECTION"),
-    )
-    sqlite_enable_wal: bool = Field(
-        default=True,
-        validation_alias=AliasChoices("SQLITE_ENABLE_WAL"),
-    )
-    sqlite_timeout: int = Field(
-        default=30,
-        validation_alias=AliasChoices("SQLITE_TIMEOUT"),
-    )
-    oceanbase_host: str = Field(
-        default="127.0.0.1",
-        validation_alias=AliasChoices("OCEANBASE_HOST"),
-    )
-    oceanbase_port: int = Field(
-        default=2881,
-        validation_alias=AliasChoices("OCEANBASE_PORT"),
-    )
-    oceanbase_user: str = Field(
-        default="root@sys",
-        validation_alias=AliasChoices("OCEANBASE_USER"),
-    )
-    oceanbase_password: str = Field(
-        default="password",
-        validation_alias=AliasChoices("OCEANBASE_PASSWORD"),
-    )
-    oceanbase_database: str = Field(
-        default="powermem",
-        validation_alias=AliasChoices("OCEANBASE_DATABASE"),
-    )
-    oceanbase_collection: str = Field(
-        default="memories",
-        validation_alias=AliasChoices("OCEANBASE_COLLECTION"),
-    )
-    oceanbase_vector_metric_type: str = Field(
-        default="cosine",
-        validation_alias=AliasChoices("OCEANBASE_VECTOR_METRIC_TYPE"),
-    )
-    oceanbase_index_type: str = Field(
-        default="IVF_FLAT",
-        validation_alias=AliasChoices("OCEANBASE_INDEX_TYPE"),
-    )
-    oceanbase_embedding_model_dims: int = Field(
-        default=1536,
-        validation_alias=AliasChoices("OCEANBASE_EMBEDDING_MODEL_DIMS"),
-    )
-    oceanbase_primary_field: str = Field(
-        default="id",
-        validation_alias=AliasChoices("OCEANBASE_PRIMARY_FIELD"),
-    )
-    oceanbase_vector_field: str = Field(
-        default="embedding",
-        validation_alias=AliasChoices("OCEANBASE_VECTOR_FIELD"),
-    )
-    oceanbase_text_field: str = Field(
-        default="document",
-        validation_alias=AliasChoices("OCEANBASE_TEXT_FIELD"),
-    )
-    oceanbase_metadata_field: str = Field(
-        default="metadata",
-        validation_alias=AliasChoices("OCEANBASE_METADATA_FIELD"),
-    )
-    oceanbase_vidx_name: str = Field(
-        default="memories_vidx",
-        validation_alias=AliasChoices("OCEANBASE_VIDX_NAME"),
-    )
-    oceanbase_include_sparse: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("SPARSE_VECTOR_ENABLE"),
-    )
-    enable_native_hybrid: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("OCEANBASE_ENABLE_NATIVE_HYBRID"),
-    )
-    postgres_collection: str = Field(
-        default="memories",
-        validation_alias=AliasChoices("POSTGRES_COLLECTION"),
-    )
-    postgres_database: str = Field(
-        default="powermem",
-        validation_alias=AliasChoices("POSTGRES_DATABASE"),
-    )
-    postgres_host: str = Field(
-        default="127.0.0.1",
-        validation_alias=AliasChoices("POSTGRES_HOST"),
-    )
-    postgres_port: int = Field(
-        default=5432,
-        validation_alias=AliasChoices("POSTGRES_PORT"),
-    )
-    postgres_user: str = Field(
-        default="postgres",
-        validation_alias=AliasChoices("POSTGRES_USER"),
-    )
-    postgres_password: str = Field(
-        default="password",
-        validation_alias=AliasChoices("POSTGRES_PASSWORD"),
-    )
-    postgres_embedding_model_dims: int = Field(
-        default=1536,
-        validation_alias=AliasChoices("POSTGRES_EMBEDDING_MODEL_DIMS"),
-    )
-    postgres_diskann: bool = Field(
-        default=True,
-        validation_alias=AliasChoices("POSTGRES_DISKANN"),
-    )
-    postgres_hnsw: bool = Field(
-        default=True,
-        validation_alias=AliasChoices("POSTGRES_HNSW"),
-    )
-
-    def _build_oceanbase_config(self) -> Dict[str, Any]:
-        connection_args = {
-            "host": self.oceanbase_host,
-            "port": self.oceanbase_port,
-            "user": self.oceanbase_user,
-            "password": self.oceanbase_password,
-            "db_name": self.oceanbase_database,
-        }
-        return {
-            "collection_name": self.oceanbase_collection,
-            "connection_args": connection_args,
-            "vidx_metric_type": self.oceanbase_vector_metric_type,
-            "index_type": self.oceanbase_index_type,
-            "embedding_model_dims": self.oceanbase_embedding_model_dims,
-            "primary_field": self.oceanbase_primary_field,
-            "vector_field": self.oceanbase_vector_field,
-            "text_field": self.oceanbase_text_field,
-            "metadata_field": self.oceanbase_metadata_field,
-            "vidx_name": self.oceanbase_vidx_name,
-            "include_sparse": self.oceanbase_include_sparse,
-            "enable_native_hybrid": self.enable_native_hybrid,
-        }
-
-    def _build_postgres_config(self) -> Dict[str, Any]:
-        return {
-            "collection_name": self.postgres_collection,
-            "dbname": self.postgres_database,
-            "host": self.postgres_host,
-            "port": self.postgres_port,
-            "user": self.postgres_user,
-            "password": self.postgres_password,
-            "embedding_model_dims": self.postgres_embedding_model_dims,
-            "diskann": self.postgres_diskann,
-            "hnsw": self.postgres_hnsw,
-        }
-
-    def _build_sqlite_config(self) -> Dict[str, Any]:
-        return {
-            "database_path": self.sqlite_path,
-            "collection_name": self.sqlite_collection,
-            "enable_wal": self.sqlite_enable_wal,
-            "timeout": self.sqlite_timeout,
-        }
 
     def to_config(self) -> Dict[str, Any]:
+        """
+        Convert settings to VectorStore configuration dictionary.
+        
+        Provider-specific fields are automatically loaded from environment
+        variables by the provider config class.
+        """
+        from powermem.storage.config.base import BaseVectorStoreConfig
+        
         db_provider = self.provider.lower()
-        builder = getattr(self, f"_build_{db_provider}_config", None)
-        if not callable(builder):
-            builder = self._build_sqlite_config
-        return {"provider": db_provider, "config": builder()}
+        
+        # Handle postgres alias
+        if db_provider == "postgres":
+            db_provider = "pgvector"
+        
+        # 1. Get provider config class from registry
+        config_cls = (
+            BaseVectorStoreConfig.get_provider_config_cls(db_provider)
+            or BaseVectorStoreConfig
+        )
+        
+        # 2. Create provider settings from environment variables
+        # All provider-specific fields are loaded here automatically
+        provider_settings = config_cls()
+        
+        # 3. Export to dict
+        vector_store_config = provider_settings.model_dump(exclude_none=True)
+        
+        return {"provider": db_provider, "config": vector_store_config}
 
 
 class LLMSettings(_BasePowermemSettings):
@@ -645,122 +496,47 @@ class GraphStoreSettings(_BasePowermemSettings):
 
     enabled: bool = Field(default=False)
     provider: str = Field(default="oceanbase")
-    host: Optional[str] = Field(default=None)
-    port: Optional[int] = Field(default=None)
-    user: Optional[str] = Field(default=None)
-    password: Optional[str] = Field(default=None)
-    db_name: Optional[str] = Field(default=None)
-    vector_metric_type: Optional[str] = Field(default=None)
-    index_type: Optional[str] = Field(default=None)
-    embedding_model_dims: Optional[int] = Field(default=None)
-    max_hops: Optional[int] = Field(default=None)
     custom_prompt: Optional[str] = Field(default=None)
     custom_extract_relations_prompt: Optional[str] = Field(default=None)
     custom_update_graph_prompt: Optional[str] = Field(default=None)
     custom_delete_relations_prompt: Optional[str] = Field(default=None)
 
-    def _build_oceanbase_config(
-        self, database_settings: "DatabaseSettings"
-    ) -> Dict[str, Any]:
-        graph_connection_args = {
-            "host": _get_graph_value(
-                self,
-                "host",
-                _get_db_value(
-                    database_settings,
-                    "oceanbase_host",
-                ),
-                "127.0.0.1",
-            ),
-            "port": _get_graph_value(
-                self,
-                "port",
-                _get_db_value(
-                    database_settings,
-                    "oceanbase_port",
-                ),
-                2881,
-            ),
-            "user": _get_graph_value(
-                self,
-                "user",
-                _get_db_value(
-                    database_settings,
-                    "oceanbase_user",
-                ),
-                "root@sys",
-            ),
-            "password": _get_graph_value(
-                self,
-                "password",
-                _get_db_value(
-                    database_settings,
-                    "oceanbase_password",
-                ),
-                "password",
-            ),
-            "db_name": _get_graph_value(
-                self,
-                "db_name",
-                _get_db_value(
-                    database_settings,
-                    "oceanbase_database",
-                ),
-                "powermem",
-            ),
-        }
-        return {
-            "host": graph_connection_args["host"],
-            "port": graph_connection_args["port"],
-            "user": graph_connection_args["user"],
-            "password": graph_connection_args["password"],
-            "db_name": graph_connection_args["db_name"],
-            "vidx_metric_type": _get_graph_value_with_database(
-                self,
-                "vector_metric_type",
-                database_settings,
-                "oceanbase_vector_metric_type",
-                "l2",
-            ),
-            "index_type": _get_graph_value_with_database(
-                self,
-                "index_type",
-                database_settings,
-                "oceanbase_index_type",
-                "HNSW",
-            ),
-            "embedding_model_dims": _get_graph_value_with_database(
-                self,
-                "embedding_model_dims",
-                database_settings,
-                "oceanbase_embedding_model_dims",
-                1536,
-            ),
-            "max_hops": _get_graph_value(
-                self,
-                "max_hops",
-                None,
-                3,
-            ),
-        }
-
     def to_config(
         self,
-        database_settings: "DatabaseSettings",
     ) -> Optional[Dict[str, Any]]:
+        """
+        Convert settings to GraphStore configuration dictionary.
+        
+        Provider-specific fields are automatically loaded from environment
+        variables by the provider config class (with fallback to VectorStore env vars).
+        """
         if not self.enabled:
             return None
-
-        graph_store_provider = self.provider.lower()
-        builder = getattr(self, f"_build_{graph_store_provider}_config", None)
-        graph_config = builder(database_settings) if callable(builder) else {}
-
+        
+        from powermem.storage.config.base import BaseGraphStoreConfig
+        
+        graph_provider = self.provider.lower()
+        
+        # 1. Get provider config class from registry
+        config_cls = (
+            BaseGraphStoreConfig.get_provider_config_cls(graph_provider)
+            or BaseGraphStoreConfig
+        )
+        
+        # 2. Create provider settings from environment variables
+        provider_settings = config_cls()
+        
+        # 3. Export to dict
+        graph_config = provider_settings.model_dump(exclude_none=True)
+        
+        # 4. Build final config
         graph_store_config = {
             "enabled": True,
-            "provider": graph_store_provider,
+            "provider": graph_provider,
             "config": graph_config,
         }
-
+        
+        # 5. Add custom prompts if configured
         if self.custom_prompt:
             graph_store_config["custom_prompt"] = self.custom_prompt
         if self.custom_extract_relations_prompt:
@@ -777,42 +553,6 @@ class GraphStoreSettings(_BasePowermemSettings):
             )
 
         return graph_store_config
-
-
-def _get_graph_value(
-    settings: GraphStoreSettings,
-    field: str,
-    fallback: Optional[Any],
-    default: Any,
-) -> Any:
-    if field in settings.model_fields_set:
-        return getattr(settings, field)
-    if fallback is not None:
-        return fallback
-    return default
-
-
-def _get_db_value(
-    settings: DatabaseSettings,
-    field: str,
-) -> Optional[Any]:
-    if field in settings.model_fields_set:
-        return getattr(settings, field)
-    return None
-
-
-def _get_graph_value_with_database(
-    settings: GraphStoreSettings,
-    field: str,
-    database_settings: DatabaseSettings,
-    database_field: str,
-    default: Any,
-) -> Any:
-    if field in settings.model_fields_set:
-        return getattr(settings, field)
-    if database_field in database_settings.model_fields_set:
-        return getattr(database_settings, database_field)
-    return default
 
 
 class PowermemSettings:
@@ -846,7 +586,7 @@ class PowermemSettings:
             if component_config is not None:
                 config[output_key] = component_config
 
-        graph_store_config = self.graph_store.to_config(self.database)
+        graph_store_config = self.graph_store.to_config()
         if graph_store_config:
             config["graph_store"] = graph_store_config
 

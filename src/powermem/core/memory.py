@@ -364,10 +364,16 @@ class Memory(MemoryBase):
             Boolean indicating whether graph store is enabled
         """
         if self.memory_config:
-            return self.memory_config.graph_store.enabled if self.memory_config.graph_store else False
+            # graph_store is None means disabled, otherwise enabled
+            return self.memory_config.graph_store is not None
         else:
             graph_store_config = self.config.get('graph_store', {})
-            return graph_store_config.get('enabled', False) if graph_store_config else False
+            # Support both old format (dict with 'enabled') and new format (config object)
+            if isinstance(graph_store_config, dict):
+                return graph_store_config.get('enabled', False) if graph_store_config else False
+            else:
+                # New format: config object means enabled
+                return graph_store_config is not None
 
     def _get_intelligent_memory_config(self) -> Dict[str, Any]:
         """

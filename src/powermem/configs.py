@@ -13,7 +13,9 @@ from powermem.integrations.embeddings.config.providers import OpenAIEmbeddingCon
 from powermem.integrations.embeddings.config.sparse_base import SparseEmbedderConfig
 from powermem.integrations.llm.config.base import BaseLLMConfig
 from powermem.integrations.llm.config.qwen import QwenConfig
-from powermem.storage.configs import VectorStoreConfig, GraphStoreConfig
+from powermem.storage.config.base import BaseVectorStoreConfig, BaseGraphStoreConfig
+from powermem.storage.config.sqlite import SQLiteConfig
+from powermem.storage.config.oceanbase import OceanBaseGraphConfig
 from powermem.integrations.rerank.config.base import BaseRerankConfig
 
 
@@ -195,9 +197,9 @@ class QueryRewriteConfig(BaseModel):
 class MemoryConfig(BaseModel):
     """Main memory configuration class."""
 
-    vector_store: VectorStoreConfig = Field(
+    vector_store: BaseVectorStoreConfig = Field(
         description="Configuration for the vector store",
-        default_factory=VectorStoreConfig,
+        default_factory=SQLiteConfig,
     )
     llm: BaseLLMConfig = Field(
         description="Configuration for the language model",
@@ -207,9 +209,9 @@ class MemoryConfig(BaseModel):
         description="Configuration for the embedding model",
         default_factory=OpenAIEmbeddingConfig,
     )
-    graph_store: GraphStoreConfig = Field(
-        description="Configuration for the graph",
-        default_factory=GraphStoreConfig,
+    graph_store: Optional[BaseGraphStoreConfig] = Field(
+        description="Configuration for the graph store (None means disabled)",
+        default=None,
     )
     reranker: Optional[BaseRerankConfig] = Field(
         description="Configuration for the reranker",
@@ -284,7 +286,7 @@ class MemoryConfig(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         result = self.model_dump(exclude_none=True)
 
-        for field in ['embedder', 'llm', 'vector_store', 'reranker']:
+        for field in ['embedder', 'llm', 'vector_store', 'reranker', 'graph_store']:
             obj = getattr(self, field, None)
             if obj and hasattr(obj, 'to_component_dict'):
                 result[field] = obj.to_component_dict()
