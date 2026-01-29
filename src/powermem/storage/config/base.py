@@ -94,10 +94,8 @@ class BaseGraphStoreConfig(BaseVectorStoreConfig):
     3. Default values
     """
     
-    # Model config - 使用 GRAPH_STORE_ 前缀
     model_config = settings_config("GRAPH_STORE_", extra="allow", env_file=None)
     
-    # Registry mechanism (独立于 VectorStore)
     _provider_name: ClassVar[Optional[str]] = None
     _class_path: ClassVar[Optional[str]] = None
     _registry: ClassVar[dict[str, type["BaseGraphStoreConfig"]]] = {}
