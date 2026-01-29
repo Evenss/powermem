@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from powermem.integrations.embeddings.config.base import BaseEmbedderConfig
 from powermem.integrations.embeddings.config.providers import OpenAIEmbeddingConfig
-from powermem.integrations.embeddings.config.sparse_base import SparseEmbedderConfig
+from powermem.integrations.embeddings.config.sparse_base import BaseSparseEmbedderConfig
 from powermem.integrations.llm.config.base import BaseLLMConfig
 from powermem.integrations.llm.config.qwen import QwenConfig
 from powermem.storage.config.base import BaseVectorStoreConfig, BaseGraphStoreConfig
@@ -217,7 +217,7 @@ class MemoryConfig(BaseModel):
         description="Configuration for the reranker",
         default=None,
     )
-    sparse_embedder: Optional[SparseEmbedderConfig] = Field(
+    sparse_embedder: Optional[BaseSparseEmbedderConfig] = Field(
         description="Configuration for the sparse embedder (only supported for OceanBase)",
         default=None,
     )
@@ -286,7 +286,7 @@ class MemoryConfig(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         result = self.model_dump(exclude_none=True)
 
-        for field in ['embedder', 'llm', 'vector_store', 'reranker', 'graph_store']:
+        for field in ['embedder', 'llm', 'vector_store', 'reranker', 'graph_store', 'sparse_embedder']:
             obj = getattr(self, field, None)
             if obj and hasattr(obj, 'to_component_dict'):
                 result[field] = obj.to_component_dict()

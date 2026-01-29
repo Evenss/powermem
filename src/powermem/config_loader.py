@@ -13,6 +13,7 @@ from pydantic_settings import BaseSettings
 
 from powermem.integrations.embeddings.config.base import BaseEmbedderConfig
 from powermem.integrations.embeddings.config.providers import CustomEmbeddingConfig
+from powermem.integrations.embeddings.config.sparse_base import BaseSparseEmbedderConfig
 from powermem.integrations.llm.config.base import BaseLLMConfig
 from powermem.settings import _DEFAULT_ENV_FILE, settings_config
 
@@ -415,14 +416,21 @@ class SparseEmbedderSettings(_BasePowermemSettings):
     def to_config(self) -> Optional[Dict[str, Any]]:
         if not self.provider:
             return None
-        config = {
-            "api_key": self.api_key,
-            "model": self.model,
-            "base_url": self.base_url,
-            "embedding_dims": self.embedding_dims,
-        }
-        config = {key: value for key, value in config.items() if value is not None}
-        return {"provider": self.provider.lower(), "config": config}
+        provider = self.provider.lower()
+        config_cls = (
+            BaseSparseEmbedderConfig.get_provider_config_cls(provider)
+            or BaseSparseEmbedderConfig
+        )
+        provider_settings = config_cls()
+        overrides = {}
+        for field in ("api_key", "model", "base_url", "embedding_dims"):
+            if field in self.model_fields_set:
+                value = getattr(self, field)
+                if value is not None:
+                    overrides[field] = value
+        if overrides:
+            provider_settings = provider_settings.model_copy(update=overrides)
+        return provider_settings.to_component_dict()
 
 
 class PerformanceSettings(_BasePowermemSettings):
