@@ -1166,6 +1166,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             )
 
             # 3. Build search parameters JSON
+            safe_query = query.replace("'", "''") if query else query
             search_params = {
                 "query": {
                     "bool": {
@@ -1173,7 +1174,7 @@ class OceanBaseVectorStore(VectorStoreBase):
                             {
                                 "query_string": {
                                     "fields": [self.fulltext_field],
-                                    "query": query
+                                    "query": safe_query
                                 }
                             }
                         ]

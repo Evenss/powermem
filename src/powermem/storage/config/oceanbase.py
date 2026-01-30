@@ -135,9 +135,17 @@ class OceanBaseConfig(BaseVectorStoreConfig):
         default=True,
         validation_alias=AliasChoices(
             "hybrid_search",
-            "OCEANBASE_ENABLE_NATIVE_HYBRID",
         ),
         description="Whether to enable hybrid search"
+    )
+
+    enable_native_hybrid: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "enable_native_hybrid",
+            "OCEANBASE_ENABLE_NATIVE_HYBRID",
+        ),
+        description="Whether to enable OceanBase native hybrid search"
     )
     
     auto_configure_vector_index: bool = Field(
