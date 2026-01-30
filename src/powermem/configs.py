@@ -282,6 +282,17 @@ class MemoryConfig(BaseModel):
             self.reranker = BaseRerankConfig()
         if self.query_rewrite is None:
             self.query_rewrite = QueryRewriteConfig()
+        
+        # Sync embedding_model_dims from embedder if not set in vector_store/graph_store
+        embedder_dims = getattr(self.embedder, 'embedding_dims', None)
+        if embedder_dims is not None:
+            # Sync to vector_store if not set
+            if hasattr(self.vector_store, 'embedding_model_dims') and self.vector_store.embedding_model_dims is None:
+                self.vector_store.embedding_model_dims = embedder_dims
+            # Sync to graph_store if not set
+            if self.graph_store is not None:
+                if hasattr(self.graph_store, 'embedding_model_dims') and self.graph_store.embedding_model_dims is None:
+                    self.graph_store.embedding_model_dims = embedder_dims
 
     def to_dict(self) -> Dict[str, Any]:
         result = self.model_dump(exclude_none=True)

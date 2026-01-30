@@ -602,6 +602,23 @@ class PowermemSettings:
         if sparse_embedder_config:
             config["sparse_embedder"] = sparse_embedder_config
 
+        # Sync embedding_model_dims from embedder to vector_store and graph_store
+        embedder_config = config.get("embedder", {})
+        embedder_dims = embedder_config.get("config", {}).get("embedding_dims")
+        
+        if embedder_dims is not None:
+            # Sync to vector_store if not set
+            vector_store_config = config.get("vector_store", {})
+            vector_store_inner_config = vector_store_config.get("config", {})
+            if vector_store_inner_config.get("embedding_model_dims") is None:
+                vector_store_inner_config["embedding_model_dims"] = embedder_dims
+            
+            # Sync to graph_store if not set
+            if graph_store_config:
+                graph_store_inner_config = graph_store_config.get("config", {})
+                if graph_store_inner_config.get("embedding_model_dims") is None:
+                    graph_store_inner_config["embedding_model_dims"] = embedder_dims
+
         return config
 
 
@@ -769,6 +786,10 @@ def create_config(
             },
         },
     }
+    
+    # Sync embedding_model_dims from embedder to vector_store if not set
+    if config["vector_store"]["config"].get("embedding_model_dims") is None:
+        config["vector_store"]["config"]["embedding_model_dims"] = options.embedding_dims
     
     return config
 
