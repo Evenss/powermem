@@ -222,15 +222,19 @@ class MemoryService:
         agent_id: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        sort_by: Optional[str] = None,
+        order: str = "desc",
     ) -> List[Dict[str, Any]]:
         """
-        List memories with pagination.
+        List memories with pagination and sorting.
         
         Args:
             user_id: Filter by user ID
             agent_id: Filter by agent ID
             limit: Maximum number of results
             offset: Number of results to skip
+            sort_by: Optional field to sort by: 'created_at', 'updated_at', 'id'
+            order: Sort order: 'desc' (descending) or 'asc' (ascending)
             
         Returns:
             List of memories
@@ -241,6 +245,8 @@ class MemoryService:
                 agent_id=agent_id,
                 limit=limit,
                 offset=offset,
+                sort_by=sort_by,
+                order=order,
             )
             
             # Extract results from the dictionary response
@@ -332,7 +338,17 @@ class MemoryService:
                 message=f"Failed to update memory: {str(e)}",
                 status_code=500,
             )
-    
+
+    def get_statistics(
+        self, user_id: Optional[str] = None, agent_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get memory statistics"""
+        return self.memory.get_statistics(user_id=user_id, agent_id=agent_id)
+
+    def get_users(self) -> List[str]:
+        """Get a list of unique user IDs"""
+        return self.memory.get_users()
+
     def delete_memory(
         self,
         memory_id: int,

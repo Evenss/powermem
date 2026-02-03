@@ -5,6 +5,7 @@ This module provides the synchronous memory management interface.
 """
 
 import logging
+import warnings
 import hashlib
 import json
 from typing import Any, Dict, List, Optional, Union
@@ -283,8 +284,14 @@ class Memory(MemoryBase):
             logger.info("Using basic StorageAdapter")
 
         self.intelligence = IntelligenceManager(self.config)
-        self.telemetry = TelemetryManager(self.config)
-        self.audit = AuditLogger(self.config)
+        telemetry_config = self.config.get("telemetry")
+        if telemetry_config is None:
+            telemetry_config = self.config
+        self.telemetry = TelemetryManager(telemetry_config)
+        audit_config = self.config.get("audit")
+        if audit_config is None:
+            audit_config = self.config
+        self.audit = AuditLogger(audit_config)
 
         # Save custom prompts from config
         if self.memory_config:
@@ -332,9 +339,11 @@ class Memory(MemoryBase):
         """
         if self.memory_config:
             component_obj = getattr(self.memory_config, component, None)
-            return component_obj.provider if component_obj else default
+            provider = getattr(component_obj, 'provider', None) if component_obj else None
+            return provider if provider is not None else default
         else:
-            return self.config.get(component, {}).get('provider', default)
+            provider = self.config.get(component, {}).get('provider')
+            return provider if provider is not None else default
 
     def _get_component_config(self, component: str) -> Dict[str, Any]:
         """
@@ -348,9 +357,11 @@ class Memory(MemoryBase):
         """
         if self.memory_config:
             component_obj = getattr(self.memory_config, component, None)
-            return component_obj.config or {} if component_obj else {}
+            config = getattr(component_obj, 'config', {}) if component_obj else {}
+            return config if config is not None else {}
         else:
-            return self.config.get(component, {}).get('config', {})
+            config = self.config.get(component, {}).get('config')
+            return config if config is not None else {}
 
     def _get_graph_enabled(self) -> bool:
         """
@@ -1183,13 +1194,41 @@ class Memory(MemoryBase):
                 transformed_results.append(transformed_result)
             
             # Log audit event
-            self.audit.log_event("memory.search", {
-                "query": query,
-                "user_id": user_id,
-                "agent_id": agent_id,
-                "results_count": len(transformed_results)
-            }, user_id=user_id, agent_id=agent_id)
-            
+            self.audit.log_event(
+                "memory.search",
+                {
+                    "query": query,
+                    "user_id": user_id,
+                    "agent_id": agent_id,
+                    "results_count": len(transformed_results),
+                },
+                user_id=user_id,
+                agent_id=agent_id,
+            )
+
+            # Track access count for analytics
+            for result in transformed_results:
+                try:
+                    memory_id = result.get("id")
+                    metadata = result.get("metadata", {})
+                    if metadata and "metadata" in metadata:
+                        user_metadata = metadata.get("metadata", {})
+                        access_count = user_metadata.get("access_count", 0) + 1
+                        user_metadata["access_count"] = access_count
+                        user_metadata["last_accessed_at"] = (
+                            get_current_datetime().isoformat()
+                        )
+
+                        # Update in storage directly to avoid re-embedding
+                        if hasattr(self.storage, "vector_store"):
+                            self.storage.vector_store.update(
+                                vector_id=memory_id, payload={"metadata": user_metadata}
+                            )
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to update access count for search result: {e}"
+                    )
+
             # Capture telemetry
             self.telemetry.capture_event("memory.search", {
                 "user_id": user_id,
@@ -1249,12 +1288,31 @@ class Memory(MemoryBase):
                             self.storage.update_memory(memory_id, {**updates}, user_id, agent_id)
                     except Exception:
                         pass
-                self.audit.log_event("memory.get", {
-                    "memory_id": memory_id,
-                    "user_id": user_id,
-                    "agent_id": agent_id
-                }, user_id=user_id, agent_id=agent_id)
-            
+                # Track access count for analytics
+                try:
+                    metadata = result.get("metadata", {})
+                    if metadata and "metadata" in metadata:
+                        user_metadata = metadata.get("metadata", {})
+                        access_count = user_metadata.get("access_count", 0) + 1
+                        user_metadata["access_count"] = access_count
+                        user_metadata["last_accessed_at"] = (
+                            get_current_datetime().isoformat()
+                        )
+
+                        if hasattr(self.storage, "vector_store"):
+                            self.storage.vector_store.update(
+                                vector_id=memory_id, payload={"metadata": user_metadata}
+                            )
+                except Exception as e:
+                    logger.debug(f"Failed to update access count for get result: {e}")
+
+                self.audit.log_event(
+                    "memory.get",
+                    {"memory_id": memory_id, "user_id": user_id, "agent_id": agent_id},
+                    user_id=user_id,
+                    agent_id=agent_id,
+                )
+
             return result
             
         except Exception as e:
@@ -1421,8 +1479,22 @@ class Memory(MemoryBase):
         limit: int = 100,
         offset: int = 0,
         filters: Optional[Dict[str, Any]] = None,
+        sort_by: Optional[str] = None,
+        order: str = "desc",
     ) -> dict[str, list[dict[str, Any]]]:
-        """Get all memories with optional filtering.
+        """Get all memories with optional filtering and sorting.
+        
+        Args:
+            user_id: Optional user ID filter
+            agent_id: Optional agent ID filter
+            run_id: Optional run ID filter
+            limit: Maximum number of results to return (default: 100)
+            offset: Number of results to skip (default: 0)
+            filters: Optional additional filters dictionary
+            sort_by: Optional field to sort results by. Options: "created_at" (creation time),
+                     "updated_at" (update time), "id" (memory ID). If None, results are returned
+                     in their original order (typically by ID).
+            order: Sort order. "desc" for descending (default), "asc" for ascending
         
         Returns:
             dict[str, list[dict[str, Any]]]: A dictionary containing all memories with the following structure:
@@ -1438,7 +1510,9 @@ class Memory(MemoryBase):
                 - "relations" (List[Dict], optional): Graph relations if graph store is enabled
         """
         try:
-            results = self.storage.get_all_memories(user_id, agent_id, run_id, limit, offset)
+            results = self.storage.get_all_memories(
+                user_id, agent_id, run_id, limit, offset, sort_by=sort_by, order=order
+            )
             
             self.audit.log_event("memory.get_all", {
                 "user_id": user_id,
@@ -1461,7 +1535,67 @@ class Memory(MemoryBase):
         except Exception as e:
             logger.error(f"Failed to get all memories: {e}")
             raise
-    
+
+    def get_statistics(
+        self, user_id: Optional[str] = None, agent_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get statistics for the memories.
+
+        Args:
+            user_id: Optional user ID to filter by
+            agent_id: Optional agent ID to filter by
+
+        Returns:
+            Dict[str, Any]: Statistics including total count, type distribution, etc.
+        """
+        filters = {}
+        if user_id:
+            filters["user_id"] = user_id
+        if agent_id or self.agent_id:
+            filters["agent_id"] = agent_id or self.agent_id
+
+        try:
+            # Check if storage has get_statistics, otherwise use vector_store directly
+            if hasattr(self.storage, "get_statistics"):
+                return self.storage.get_statistics(filters=filters)
+            elif hasattr(self.storage, "vector_store") and hasattr(
+                self.storage.vector_store, "get_statistics"
+            ):
+                return self.storage.vector_store.get_statistics(filters=filters)
+            else:
+                return {
+                    "total_memories": 0,
+                    "by_type": {},
+                    "avg_importance": 0.0,
+                    "top_accessed": [],
+                    "growth_trend": {},
+                }
+        except Exception as e:
+            logger.error(f"Failed to get statistics: {e}")
+            return {}
+
+    def get_users(self) -> List[str]:
+        """
+        Get a list of unique user IDs.
+
+        Returns:
+            List[str]: List of unique user IDs
+        """
+        try:
+            # Check if storage has get_unique_users, otherwise use vector_store directly
+            if hasattr(self.storage, "get_unique_users"):
+                return self.storage.get_unique_users()
+            elif hasattr(self.storage, "vector_store") and hasattr(
+                self.storage.vector_store, "get_unique_users"
+            ):
+                return self.storage.vector_store.get_unique_users()
+            else:
+                return []
+        except Exception as e:
+            logger.error(f"Failed to get users: {e}")
+            return []
+
     def reset(self):
         """
         Reset the memory store by:
@@ -1705,6 +1839,8 @@ class Memory(MemoryBase):
     def from_config(cls, config: Optional[Dict[str, Any]] = None, **kwargs):
         """
         Create Memory instance from configuration.
+
+        Deprecated: prefer `create_memory()` or `auto_config()`.
         
         Args:
             config: Configuration dictionary
@@ -1722,6 +1858,11 @@ class Memory(MemoryBase):
             })
             ```
         """
+        warnings.warn(
+            "Memory.from_config is deprecated; prefer create_memory() or auto_config().",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if config is None:
             # Use auto config from environment
             from ..config_loader import auto_config
