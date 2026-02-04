@@ -10,6 +10,9 @@ def _reset_env(monkeypatch, keys):
 def _disable_env_file(monkeypatch):
     monkeypatch.setattr(config_loader, "_DEFAULT_ENV_FILE", None, raising=False)
     monkeypatch.setattr(settings, "_DEFAULT_ENV_FILE", None, raising=False)
+    new_config = dict(config_loader.EmbeddingSettings.model_config)
+    new_config["env_file"] = None
+    monkeypatch.setattr(config_loader.EmbeddingSettings, "model_config", new_config)
 
 
 def test_load_config_from_env_builds_core_config(monkeypatch):
@@ -90,7 +93,7 @@ def test_load_config_from_env_graph_store_fallback(monkeypatch):
     assert graph_store["config"]["max_hops"] == 3
 
 
-def test_load_config_from_env_does_not_expose_internal_settings(monkeypatch):
+def test_load_config_from_env_loads_internal_settings(monkeypatch):
     _reset_env(
         monkeypatch,
         [
@@ -110,9 +113,16 @@ def test_load_config_from_env_does_not_expose_internal_settings(monkeypatch):
 
     config = config_loader.load_config_from_env()
 
-    assert "performance" not in config
-    assert "security" not in config
-    assert "memory_decay" not in config
+    # These settings should be included in the config
+    assert "performance" in config
+    assert config["performance"]["memory_batch_size"] == 200
+    
+    assert "security" in config
+    assert config["security"]["encryption_enabled"] is True
+    assert config["security"]["access_control_enabled"] is False
+    
+    assert "memory_decay" in config
+    assert config["memory_decay"]["enabled"] is False
 
 
 def test_load_config_from_env_telemetry_aliases(monkeypatch):
