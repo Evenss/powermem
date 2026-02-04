@@ -143,6 +143,17 @@ class DatabaseSettings(_BasePowermemSettings):
         # 3. Export to dict
         vector_store_config = provider_settings.model_dump(exclude_none=True)
         
+        # 4. For OceanBase, build connection_args for backward compatibility
+        if db_provider == "oceanbase":
+            connection_args = {}
+            for key in ["host", "port", "user", "password", "db_name"]:
+                if key in vector_store_config:
+                    connection_args[key] = vector_store_config[key]
+            
+            # Only add connection_args if we have connection parameters
+            if connection_args:
+                vector_store_config["connection_args"] = connection_args
+        
         return {"provider": db_provider, "config": vector_store_config}
 
 
