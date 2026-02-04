@@ -10,6 +10,9 @@ def _reset_env(monkeypatch, keys):
 def _disable_env_file(monkeypatch):
     monkeypatch.setattr(config_loader, "_DEFAULT_ENV_FILE", None, raising=False)
     monkeypatch.setattr(settings, "_DEFAULT_ENV_FILE", None, raising=False)
+    new_config = dict(config_loader.EmbeddingSettings.model_config)
+    new_config["env_file"] = None
+    monkeypatch.setattr(config_loader.EmbeddingSettings, "model_config", new_config)
 
 
 def test_load_config_from_env_builds_core_config(monkeypatch):
