@@ -83,7 +83,7 @@ jobs:
           pip install --upgrade setuptools wheel
 
       - name: Install and verify dependencies
-        working-directory: benchmark/lomoco
+        working-directory: benchmark/locomo
         run: |
           pip install -r requirements.txt
           pip check

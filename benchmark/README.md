@@ -10,4 +10,4 @@ This directory contains the benchmarking suite for PowerMem, including a REST AP
 ## Quick Links
 
 - **Benchmark Server**: FastAPI-based REST API server for memory operations (`server/`)
-- **LOCOMO Load Testing**: Comprehensive benchmarking tool using the LOCOMO dataset (`lomoco/`)
+- **LOCOMO Load Testing**: Comprehensive benchmarking tool using the LOCOMO dataset (`locomo/`)
