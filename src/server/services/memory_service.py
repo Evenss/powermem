@@ -606,3 +606,94 @@ class MemoryService:
             "updated_count": len(updated),
             "failed_count": len(failed),
         }
+    
+    async def analyze_memory_quality(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Analyze memory quality and identify issues.
+        
+        Args:
+            user_id: Filter by user ID
+            agent_id: Filter by agent ID
+            
+        Returns:
+            Dictionary with quality metrics:
+                - total_memories: Total number of memories
+                - low_quality_count: Number of low quality memories
+                - low_quality_ratio: Ratio of low quality memories (0.0-1.0)
+                - quality_criteria: Distribution of quality issues
+        """
+        try:
+            # Get all memories (without pagination limit for analysis)
+            result = self.memory.get_all(
+                user_id=user_id,
+                agent_id=agent_id,
+                limit=10000,  # High limit for comprehensive analysis
+                offset=0,
+            )
+            
+            memories_list = result.get("results", [])
+            total_memories = len(memories_list)
+            
+            if total_memories == 0:
+                return {
+                    "total_memories": 0,
+                    "low_quality_count": 0,
+                    "low_quality_ratio": 0.0,
+                    "quality_criteria": {},
+                }
+            
+            # Quality criteria counters
+            quality_issues = {
+                "missing_metadata": 0,
+                "empty_content": 0,
+                "low_importance": 0,
+            }
+            
+            low_quality_memories = set()  # Use set to avoid counting same memory twice
+            
+            for memory in memories_list:
+                memory_id = memory.get("id") or memory.get("memory_id")
+                
+                # Check for missing or empty metadata
+                metadata = memory.get("metadata")
+                if not metadata or (isinstance(metadata, dict) and len(metadata) == 0):
+                    quality_issues["missing_metadata"] += 1
+                    low_quality_memories.add(memory_id)
+                
+                # Check for empty or very short content
+                # Note: get_all() returns 'memory' field, not 'content'
+                content = memory.get("memory") or memory.get("content") or memory.get("data") or ""
+                content_len = len(str(content).strip())
+                if content_len < 5:
+                    quality_issues["empty_content"] += 1
+                    low_quality_memories.add(memory_id)
+                
+                # Check for low importance (if importance field exists)
+                importance = memory.get("importance")
+                if importance is not None and float(importance) < 0.3:
+                    quality_issues["low_importance"] += 1
+                    low_quality_memories.add(memory_id)
+            
+            low_quality_count = len(low_quality_memories)
+            low_quality_ratio = low_quality_count / total_memories if total_memories > 0 else 0.0
+            
+            logger.info(f"Quality analysis complete: {low_quality_count}/{total_memories} low quality memories")
+            
+            return {
+                "total_memories": total_memories,
+                "low_quality_count": low_quality_count,
+                "low_quality_ratio": round(low_quality_ratio, 4),
+                "quality_criteria": quality_issues,
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to analyze memory quality: {e}", exc_info=True)
+            raise APIError(
+                code=ErrorCode.INTERNAL_ERROR,
+                message=f"Failed to analyze memory quality: {str(e)}",
+                status_code=500,
+            )

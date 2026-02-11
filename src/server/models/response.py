@@ -130,6 +130,29 @@ class HealthResponse(BaseModel):
         return utc_value.replace(tzinfo=None).isoformat() + "Z"
 
 
+class DependencyStatus(BaseModel):
+    """Response model for dependency health status"""
+    
+    name: str = Field(..., description="Dependency name")
+    status: str = Field(..., description="Health status: healthy | degraded | unavailable")
+    latency_ms: Optional[float] = Field(None, description="Connection latency in milliseconds")
+    error_message: Optional[str] = Field(None, description="Error message if unhealthy")
+    last_checked: datetime = Field(default_factory=get_current_datetime, description="Last check timestamp")
+    
+    @field_serializer('last_checked')
+    def serialize_datetime(self, value: datetime, _info):
+        """Serialize datetime to ISO format string with Z suffix (UTC)"""
+        if value is None:
+            return None
+        # Convert to UTC if timezone-aware, otherwise assume UTC
+        if value.tzinfo is not None:
+            utc_value = value.astimezone(timezone.utc)
+        else:
+            utc_value = value
+        # Format as ISO 8601 with Z suffix
+        return utc_value.replace(tzinfo=None).isoformat() + "Z"
+
+
 class StatusResponse(BaseModel):
     """Response model for system status"""
     
@@ -137,10 +160,13 @@ class StatusResponse(BaseModel):
     version: str = Field(..., description="API version")
     storage_type: Optional[str] = Field(None, description="Storage backend type")
     llm_provider: Optional[str] = Field(None, description="LLM provider")
+    uptime_seconds: Optional[float] = Field(None, description="Service uptime in seconds")
+    started_at: Optional[datetime] = Field(None, description="Service start time")
+    dependencies: Optional[Dict[str, Dict[str, Any]]] = Field(None, description="Dependency health status")
     timestamp: datetime = Field(default_factory=get_current_datetime, description="Status timestamp")
     
-    @field_serializer('timestamp')
-    def serialize_datetime(self, value: datetime, _info):
+    @field_serializer('timestamp', 'started_at')
+    def serialize_datetime(self, value: Optional[datetime], _info):
         """Serialize datetime to ISO format string with Z suffix (UTC)"""
         if value is None:
             return None
@@ -172,3 +198,12 @@ class ErrorResponse(BaseModel):
             utc_value = value
         # Format as ISO 8601 with Z suffix
         return utc_value.replace(tzinfo=None).isoformat() + "Z"
+
+
+class MemoryQualityMetrics(BaseModel):
+    """Response model for memory quality metrics"""
+    
+    total_memories: int = Field(..., description="Total number of memories")
+    low_quality_count: int = Field(..., description="Number of low quality memories")
+    low_quality_ratio: float = Field(..., description="Low quality ratio (0.0-1.0)")
+    quality_criteria: Dict[str, int] = Field(default_factory=dict, description="Quality issues distribution")

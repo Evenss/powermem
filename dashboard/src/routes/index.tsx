@@ -22,6 +22,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { toast } from "sonner";
 import { api } from "../lib/api";
 
 import { Badge } from "@/components/ui/badge";
@@ -50,6 +51,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { SystemHealthCard } from "@/components/system-health-card";
+import { MemoryQualityCard } from "@/components/memory-quality-card";
 
 export const Route = createFileRoute("/")({
   validateSearch: (search: Record<string, unknown>) => {
@@ -78,6 +81,7 @@ function OverviewPage() {
   const [apiKeyInput, setApiKeyInput] = useState(
     localStorage.getItem("powermem_api_key") || "",
   );
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const {
     data: stats,
@@ -91,9 +95,48 @@ function OverviewPage() {
     retry: false,
   });
 
+  const {
+    data: systemStatus,
+    refetch: refetchStatus,
+  } = useQuery({
+    queryKey: ["system-status"],
+    queryFn: () => api.getSystemStatus(),
+    refetchInterval: 30000, // Auto-refresh every 30 seconds
+    retry: false,
+  });
+
+  const {
+    data: memoryQuality,
+    refetch: refetchQuality,
+  } = useQuery({
+    queryKey: ["memory-quality", user_id, agent_id],
+    queryFn: () => api.getMemoryQuality({ user_id, agent_id }),
+    retry: false,
+  });
+
   const saveApiKey = () => {
     localStorage.setItem("powermem_api_key", apiKeyInput);
     refetch();
+  };
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await Promise.all([
+        refetch(),
+        refetchStatus(),
+        refetchQuality(),
+      ]);
+      toast.success("Data refreshed", {
+        description: "All statistics have been updated",
+      });
+    } catch (error) {
+      toast.error("Failed to refresh", {
+        description: "Please check your network connection or try again later",
+      });
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   if (isLoading) {
@@ -178,20 +221,31 @@ function OverviewPage() {
             Real-time analytics for your intelligent memory system.
           </p>
         </div>
-        {user_id && (
+        <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
-            onClick={() =>
-              navigate({
-                to: "/",
-                search: { user_id: undefined, agent_id: undefined },
-              })
-            }
+            onClick={handleRefresh}
+            disabled={isRefreshing}
           >
-            Clear Filters
+            <RefreshCcw className={`size-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+            {isRefreshing ? "Refreshing..." : "Refresh"}
           </Button>
-        )}
+          {user_id && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                navigate({
+                  to: "/",
+                  search: { user_id: undefined, agent_id: undefined },
+                })
+              }
+            >
+              Clear Filters
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Stats Grid */}
@@ -226,6 +280,9 @@ function OverviewPage() {
           description="Days with activity"
         />
       </div>
+
+      {/* System Health Panel */}
+      <SystemHealthCard status={systemStatus} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Growth Trend */}
@@ -387,6 +444,11 @@ function OverviewPage() {
             </ChartContainer>
           </CardContent>
         </Card>
+      </div>
+
+      {/* Memory Quality Analysis */}
+      <div className="grid grid-cols-1 gap-6">
+        <MemoryQualityCard quality={memoryQuality} />
       </div>
     </div>
   );

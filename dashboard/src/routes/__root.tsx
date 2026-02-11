@@ -11,6 +11,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
+import { Toaster } from "@/components/ui/sonner";
 import TanStackQueryDevtools from "../integrations/tanstack-query/devtools";
 
 interface MyRouterContext {
@@ -39,6 +40,7 @@ function RootLayout() {
           <Outlet />
         </main>
       </SidebarInset>
+      <Toaster />
       <TanStackDevtools
         config={{
           position: "bottom-right",

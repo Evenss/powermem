@@ -2,6 +2,8 @@
  * API client for the PowerMem Dashboard.
  */
 
+import type { SystemStatus, MemoryQualityMetrics } from "../types/api";
+
 const BASE_URL = "/api/v1";
 
 export interface MemoryStats {
@@ -128,4 +130,10 @@ export const api = {
       method: "DELETE",
       body: { memory_ids: memoryIds, user_id: userId },
     }),
+
+  getSystemStatus: () =>
+    fetchWithAuth<SystemStatus>("/system/status"),
+
+  getMemoryQuality: (params?: { user_id?: string; agent_id?: string }) =>
+    fetchWithAuth<MemoryQualityMetrics>("/memories/quality", { params }),
 };

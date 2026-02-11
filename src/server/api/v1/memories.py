@@ -224,6 +224,33 @@ async def get_memory_stats(
 
 
 @router.get(
+    "/quality",
+    response_model=APIResponse,
+    summary="Get memory quality metrics",
+    description="Analyze memory quality and identify potential issues",
+)
+@limiter.limit(get_rate_limit_string())
+async def get_memory_quality(
+    request: Request,
+    user_id: Optional[str] = Query(None, description="Filter by user ID"),
+    agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
+    api_key: str = Depends(verify_api_key),
+    service: MemoryService = Depends(get_memory_service),
+):
+    """Get memory quality metrics"""
+    quality_metrics = await service.analyze_memory_quality(
+        user_id=user_id,
+        agent_id=agent_id,
+    )
+
+    return APIResponse(
+        success=True,
+        data=quality_metrics,
+        message="Quality metrics retrieved successfully",
+    )
+
+
+@router.get(
     "/users",
     response_model=APIResponse,
     summary="Get unique users",
