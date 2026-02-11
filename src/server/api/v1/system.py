@@ -14,6 +14,7 @@ from ...config import config
 from ...utils.metrics import get_metrics_collector
 from ...utils.health_check import check_all_dependencies
 from powermem import auto_config
+from powermem.version import __version__ as powermem_version
 
 # Import server start time from state module to avoid circular imports
 from ...state import SERVER_START_TIME
@@ -96,7 +97,7 @@ async def get_status(
         
         status_data = StatusResponse(
             status=system_status,
-            version=config.api_version,
+            version=powermem_version,
             storage_type=storage_type,
             llm_provider=llm_provider,
             uptime_seconds=uptime_seconds,
@@ -116,7 +117,7 @@ async def get_status(
         
         status_data = StatusResponse(
             status="degraded",
-            version=config.api_version,
+            version=powermem_version,
             storage_type=None,
             llm_provider=None,
             uptime_seconds=uptime_seconds,

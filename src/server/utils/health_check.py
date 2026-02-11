@@ -9,49 +9,6 @@ from datetime import datetime
 from ..models.response import DependencyStatus
 
 
-async def check_vector_store() -> DependencyStatus:
-    """
-    Check vector store health and measure latency
-    
-    Returns:
-        DependencyStatus with health information
-    """
-    start_time = time.time()
-    
-    try:
-        from powermem import Memory, auto_config
-        
-        # Get config
-        config = auto_config()
-        
-        # Try to initialize Memory (this will test the connection)
-        memory = Memory(config=config)
-        
-        # Measure latency
-        latency_ms = (time.time() - start_time) * 1000
-        
-        return DependencyStatus(
-            name="vector_store",
-            status="healthy",
-            latency_ms=round(latency_ms, 2),
-            last_checked=datetime.utcnow(),
-        )
-    except Exception as e:
-        latency_ms = (time.time() - start_time) * 1000
-        error_msg = str(e)
-        # Truncate long error messages
-        if len(error_msg) > 200:
-            error_msg = error_msg[:197] + "..."
-        
-        return DependencyStatus(
-            name="vector_store",
-            status="unavailable",
-            latency_ms=round(latency_ms, 2),
-            error_message=error_msg,
-            last_checked=datetime.utcnow(),
-        )
-
-
 async def check_database() -> DependencyStatus:
     """
     Check database health and measure latency
@@ -159,12 +116,10 @@ async def check_all_dependencies() -> Dict[str, DependencyStatus]:
     Returns:
         Dictionary mapping dependency name to status
     """
-    vector_store_status = await check_vector_store()
     database_status = await check_database()
     llm_status = await check_llm()
     
     return {
-        "vector_store": vector_store_status,
         "database": database_status,
         "llm": llm_status,
     }
