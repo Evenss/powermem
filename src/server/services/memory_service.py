@@ -4,6 +4,7 @@ Memory service for PowerMem API
 
 import logging
 from typing import Any, Dict, List, Optional
+from datetime import datetime
 from powermem import Memory, auto_config
 from ..models.errors import ErrorCode, APIError
 from ..utils.converters import memory_dict_to_response
@@ -340,10 +341,129 @@ class MemoryService:
             )
 
     def get_statistics(
-        self, user_id: Optional[str] = None, agent_id: Optional[str] = None
+        self, 
+        user_id: Optional[str] = None, 
+        agent_id: Optional[str] = None,
+        cutoff_date: Optional[datetime] = None
     ) -> Dict[str, Any]:
-        """Get memory statistics"""
-        return self.memory.get_statistics(user_id=user_id, agent_id=agent_id)
+        """Get memory statistics with optional time filtering"""
+        # Get base statistics from Memory
+        stats = self.memory.get_statistics(user_id=user_id, agent_id=agent_id)
+        
+        # If cutoff_date is provided, we need to filter the results
+        if cutoff_date:
+            # Get all memories to filter by date
+            all_memories = self.memory.get_all(
+                user_id=user_id,
+                agent_id=agent_id,
+                limit=10000
+            ).get("results", [])
+            
+            # Filter memories by created_at
+            filtered_memories = [
+                m for m in all_memories
+                if self._parse_datetime(m.get("created_at")) >= cutoff_date
+            ]
+            
+            # Recalculate statistics for filtered memories
+            stats = self._calculate_stats_from_memories(filtered_memories)
+        
+        return stats
+    
+    def _parse_datetime(self, date_str: Optional[str]) -> datetime:
+        """Parse datetime string to datetime object"""
+        if not date_str:
+            return datetime.min
+        try:
+            # Try ISO format with timezone
+            from dateutil import parser
+            return parser.parse(date_str)
+        except:
+            return datetime.min
+    
+    def _calculate_stats_from_memories(self, memories: List[Dict]) -> Dict[str, Any]:
+        """Calculate statistics from a list of memories"""
+        from collections import defaultdict
+        from datetime import datetime, timedelta, timezone
+        
+        total_memories = len(memories)
+        if total_memories == 0:
+            return {
+                "total_memories": 0,
+                "by_type": {},
+                "avg_importance": 0.0,
+                "top_accessed": [],
+                "growth_trend": {},
+                "age_distribution": {
+                    "< 1 day": 0,
+                    "1-7 days": 0,
+                    "7-30 days": 0,
+                    "> 30 days": 0,
+                },
+            }
+        
+        # Calculate statistics
+        by_type = defaultdict(int)
+        total_importance = 0.0
+        access_counts = []
+        growth_by_date = defaultdict(int)
+        age_distribution = {
+            "< 1 day": 0,
+            "1-7 days": 0,
+            "7-30 days": 0,
+            "> 30 days": 0,
+        }
+        
+        now = datetime.now(timezone.utc)
+        
+        for m in memories:
+            # Type distribution
+            mem_type = m.get("type") or m.get("memory_type") or "unknown"
+            by_type[mem_type] += 1
+            
+            # Importance
+            importance = m.get("importance") or 0.5
+            total_importance += float(importance)
+            
+            # Access count
+            access_count = m.get("access_count", 0)
+            if access_count > 0:
+                access_counts.append({
+                    "id": m.get("id") or m.get("memory_id"),
+                    "content": (m.get("memory") or m.get("content") or "")[:100],
+                    "access_count": access_count,
+                })
+            
+            # Growth trend by date
+            created_at = m.get("created_at")
+            if created_at:
+                date_obj = self._parse_datetime(created_at)
+                date_key = date_obj.strftime("%Y-%m-%d")
+                growth_by_date[date_key] += 1
+                
+                # Age distribution
+                age = (now - date_obj).days
+                if age < 1:
+                    age_distribution["< 1 day"] += 1
+                elif age < 7:
+                    age_distribution["1-7 days"] += 1
+                elif age < 30:
+                    age_distribution["7-30 days"] += 1
+                else:
+                    age_distribution["> 30 days"] += 1
+        
+        # Sort and limit top accessed
+        access_counts.sort(key=lambda x: x["access_count"], reverse=True)
+        top_accessed = access_counts[:10]
+        
+        return {
+            "total_memories": total_memories,
+            "by_type": dict(by_type),
+            "avg_importance": total_importance / total_memories if total_memories > 0 else 0.0,
+            "top_accessed": top_accessed,
+            "growth_trend": dict(growth_by_date),
+            "age_distribution": age_distribution,
+        }
 
     def get_users(self) -> List[str]:
         """Get a list of unique user IDs"""
@@ -611,6 +731,7 @@ class MemoryService:
         self,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        cutoff_date: Optional[datetime] = None,
     ) -> Dict[str, Any]:
         """
         Analyze memory quality and identify issues.
@@ -618,6 +739,7 @@ class MemoryService:
         Args:
             user_id: Filter by user ID
             agent_id: Filter by agent ID
+            cutoff_date: Optional cutoff date for time filtering
             
         Returns:
             Dictionary with quality metrics:
@@ -636,6 +758,14 @@ class MemoryService:
             )
             
             memories_list = result.get("results", [])
+            
+            # Filter by cutoff_date if provided
+            if cutoff_date:
+                memories_list = [
+                    m for m in memories_list
+                    if self._parse_datetime(m.get("created_at")) >= cutoff_date
+                ]
+            
             total_memories = len(memories_list)
             
             if total_memories == 0:

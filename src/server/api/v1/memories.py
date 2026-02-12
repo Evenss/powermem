@@ -4,6 +4,7 @@ Memory management API routes
 
 import logging
 from typing import List, Optional
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Query, Request, UploadFile, File
 from fastapi.responses import Response
 from slowapi import Limiter
@@ -207,13 +208,25 @@ async def get_memory_stats(
     request: Request,
     user_id: Optional[str] = Query(None, description="Filter by user ID"),
     agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
+    time_range: Optional[str] = Query(
+        None,
+        regex="^(7d|30d|90d|all)$",
+        description="Time range filter: 7d, 30d, 90d, or all"
+    ),
     api_key: str = Depends(verify_api_key),
     service: MemoryService = Depends(get_memory_service),
 ):
     """Get memory statistics"""
+    # Calculate cutoff date based on time_range
+    cutoff_date = None
+    if time_range and time_range != "all":
+        days = int(time_range[:-1])  # Extract number from "7d", "30d", "90d"
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+    
     stats = service.get_statistics(
         user_id=user_id,
         agent_id=agent_id,
+        cutoff_date=cutoff_date,
     )
 
     return APIResponse(
@@ -234,13 +247,25 @@ async def get_memory_quality(
     request: Request,
     user_id: Optional[str] = Query(None, description="Filter by user ID"),
     agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
+    time_range: Optional[str] = Query(
+        None,
+        regex="^(7d|30d|90d|all)$",
+        description="Time range filter: 7d, 30d, 90d, or all"
+    ),
     api_key: str = Depends(verify_api_key),
     service: MemoryService = Depends(get_memory_service),
 ):
     """Get memory quality metrics"""
+    # Calculate cutoff date based on time_range
+    cutoff_date = None
+    if time_range and time_range != "all":
+        days = int(time_range[:-1])  # Extract number from "7d", "30d", "90d"
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+    
     quality_metrics = await service.analyze_memory_quality(
         user_id=user_id,
         agent_id=agent_id,
+        cutoff_date=cutoff_date,
     )
 
     return APIResponse(

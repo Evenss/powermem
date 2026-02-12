@@ -35,6 +35,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   type ChartConfig,
   ChartContainer,
   ChartLegend,
@@ -43,6 +50,7 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -53,6 +61,7 @@ import {
 } from "@/components/ui/table";
 import { SystemHealthCard } from "@/components/system-health-card";
 import { MemoryQualityCard } from "@/components/memory-quality-card";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 export const Route = createFileRoute("/")({
   validateSearch: (search: Record<string, unknown>) => {
@@ -82,6 +91,7 @@ function OverviewPage() {
     localStorage.getItem("powermem_api_key") || "",
   );
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [timeRange, setTimeRange] = useState<string>("30d");
 
   const {
     data: stats,
@@ -89,8 +99,8 @@ function OverviewPage() {
     error,
     refetch,
   } = useQuery({
-    queryKey: ["stats", user_id, agent_id],
-    queryFn: () => api.getStats({ user_id, agent_id }),
+    queryKey: ["stats", user_id, agent_id, timeRange],
+    queryFn: () => api.getStats({ user_id, agent_id, time_range: timeRange }),
     // to instantly show the API key error without waiting
     retry: false,
   });
@@ -109,8 +119,8 @@ function OverviewPage() {
     data: memoryQuality,
     refetch: refetchQuality,
   } = useQuery({
-    queryKey: ["memory-quality", user_id, agent_id],
-    queryFn: () => api.getMemoryQuality({ user_id, agent_id }),
+    queryKey: ["memory-quality", user_id, agent_id, timeRange],
+    queryFn: () => api.getMemoryQuality({ user_id, agent_id, time_range: timeRange }),
     retry: false,
   });
 
@@ -141,8 +151,57 @@ function OverviewPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <RefreshCcw className="h-12 w-12 animate-spin text-primary" />
+      <div className="p-4 space-y-6 max-w-7xl mx-auto">
+        {/* Header skeleton */}
+        <div className="flex justify-between items-center">
+          <div className="space-y-2">
+            <Skeleton className="h-8 w-48" />
+            <Skeleton className="h-4 w-96" />
+          </div>
+          <Skeleton className="h-9 w-24" />
+        </div>
+        
+        {/* Stats cards skeleton */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[...Array(4)].map((_, i) => (
+            <Card key={i}>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1">
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-4 w-4" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-8 w-16 mb-1" />
+                <Skeleton className="h-3 w-32" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        
+        {/* System health card skeleton */}
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-5 w-32" />
+            <Skeleton className="h-4 w-48 mt-2" />
+          </CardHeader>
+          <CardContent>
+            <Skeleton className="h-[200px] w-full" />
+          </CardContent>
+        </Card>
+        
+        {/* Charts skeleton */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {[...Array(2)].map((_, i) => (
+            <Card key={i}>
+              <CardHeader>
+                <Skeleton className="h-5 w-32" />
+                <Skeleton className="h-4 w-48 mt-2" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-[300px] w-full" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </div>
     );
   }
@@ -222,6 +281,17 @@ function OverviewPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Select value={timeRange} onValueChange={setTimeRange}>
+            <SelectTrigger className="w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="7d">Last 7 days</SelectItem>
+              <SelectItem value="30d">Last 30 days</SelectItem>
+              <SelectItem value="90d">Last 90 days</SelectItem>
+              <SelectItem value="all">All time</SelectItem>
+            </SelectContent>
+          </Select>
           <Button
             variant="outline"
             size="sm"
@@ -282,48 +352,53 @@ function OverviewPage() {
       </div>
 
       {/* System Health Panel */}
-      <SystemHealthCard status={systemStatus} />
+      <ErrorBoundary>
+        <SystemHealthCard status={systemStatus} />
+      </ErrorBoundary>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Growth Trend */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <TrendingUp className="size-4 text-primary" />
-              Growth Trend
-            </CardTitle>
-            <CardDescription>Daily memory creation volume</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ChartContainer config={chartConfig} className="h-[300px] w-full">
-              <LineChart
-                data={trendData}
-                margin={{ top: 20, left: 12, right: 12 }}
-              >
-                <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="date"
-                  tickLine={false}
-                  axisLine={false}
-                  tickMargin={8}
-                  minTickGap={32}
-                />
-                <YAxis tickLine={false} axisLine={false} tickMargin={8} />
-                <ChartTooltip content={<ChartTooltipContent />} />
-                <Line
-                  type="monotone"
-                  dataKey="count"
-                  stroke="var(--color-count)"
-                  strokeWidth={2}
-                  dot={false}
-                />
-              </LineChart>
-            </ChartContainer>
-          </CardContent>
-        </Card>
+        <ErrorBoundary>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <TrendingUp className="size-4 text-primary" />
+                Growth Trend
+              </CardTitle>
+              <CardDescription>Daily memory creation volume</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ChartContainer config={chartConfig} className="h-[300px] w-full">
+                <LineChart
+                  data={trendData}
+                  margin={{ top: 20, left: 12, right: 12 }}
+                >
+                  <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="date"
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
+                    minTickGap={32}
+                  />
+                  <YAxis tickLine={false} axisLine={false} tickMargin={8} />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <Line
+                    type="monotone"
+                    dataKey="count"
+                    stroke="var(--color-count)"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                </LineChart>
+              </ChartContainer>
+            </CardContent>
+          </Card>
+        </ErrorBoundary>
 
         {/* Category Distribution */}
-        <Card>
+        <ErrorBoundary>
+          <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <BarChart3 className="size-4 text-primary" />
@@ -358,11 +433,13 @@ function OverviewPage() {
             </ChartContainer>
           </CardContent>
         </Card>
+        </ErrorBoundary>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Top Accessed */}
-        <Card className="lg:col-span-2">
+        <ErrorBoundary>
+          <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Activity className="size-4 text-primary" />
@@ -407,9 +484,11 @@ function OverviewPage() {
             </Table>
           </CardContent>
         </Card>
+        </ErrorBoundary>
 
         {/* Age Distribution */}
-        <Card>
+        <ErrorBoundary>
+          <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Clock className="size-4 text-primary" />
@@ -444,11 +523,14 @@ function OverviewPage() {
             </ChartContainer>
           </CardContent>
         </Card>
+        </ErrorBoundary>
       </div>
 
       {/* Memory Quality Analysis */}
       <div className="grid grid-cols-1 gap-6">
-        <MemoryQualityCard quality={memoryQuality} />
+        <ErrorBoundary>
+          <MemoryQualityCard quality={memoryQuality} />
+        </ErrorBoundary>
       </div>
     </div>
   );
