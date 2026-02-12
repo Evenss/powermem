@@ -5,9 +5,11 @@ This module provides the synchronous memory management interface.
 """
 
 import logging
+import os
 import warnings
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
 from powermem.utils.utils import get_current_datetime
@@ -15,7 +17,7 @@ from copy import deepcopy
 
 from .base import MemoryBase
 from ..configs import MemoryConfig
-from ..integrations.embeddings.config.sparse_base import BaseSparseEmbedderConfig, SparseEmbedderConfig
+from ..integrations.embeddings.config.sparse_base import BaseSparseEmbedderConfig
 from ..storage.factory import VectorStoreFactory, GraphStoreFactory
 from ..storage.adapter import StorageAdapter, SubStorageAdapter
 from ..intelligence.manager import IntelligenceManager
@@ -25,8 +27,10 @@ from ..integrations.embeddings.sparse_factory import SparseEmbedderFactory
 from ..integrations.rerank.factory import RerankFactory
 from .telemetry import TelemetryManager
 from .audit import AuditLogger
+from ..intelligence.memory_optimizer import MemoryOptimizer
 from ..intelligence.plugin import IntelligentMemoryPlugin, EbbinghausIntelligencePlugin
-from ..utils.utils import remove_code_blocks, convert_config_object_to_dict, parse_vision_messages
+from ..utils.utils import remove_code_blocks, convert_config_object_to_dict, parse_vision_messages, set_timezone
+from ..utils.io import export_to_json, export_to_csv, import_from_json, import_from_csv
 from ..prompts.intelligent_memory_prompts import (
     FACT_RETRIEVAL_PROMPT,
     FACT_EXTRACTION_PROMPT,
@@ -35,6 +39,9 @@ from ..prompts.intelligent_memory_prompts import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Global background thread pool for async memory operations
+_BACKGROUND_EXECUTOR = ThreadPoolExecutor(max_workers=3)
 
 
 def _auto_convert_config(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -163,6 +170,12 @@ class Memory(MemoryBase):
 
         self.agent_id = agent_id
         
+        # Set timezone from config if provided (priority: config > env)
+        timezone_config = self.config.get('timezone')
+        if timezone_config:
+            set_timezone(timezone_config)
+            logger.debug(f"Timezone set from config: {timezone_config}")
+        
         # Extract providers from config with fallbacks
         self.storage_type = storage_type or self._get_provider('vector_store', 'oceanbase')
         self.llm_provider = llm_provider or self._get_provider('llm', 'mock')
@@ -242,17 +255,20 @@ class Memory(MemoryBase):
         if self.storage_type.lower() == 'oceanbase' and include_sparse:
             sparse_config_obj = None
             sparse_embedder_provider = None
-            
+
             if self.memory_config and hasattr(self.memory_config, 'sparse_embedder') and self.memory_config.sparse_embedder:
                 sparse_config_obj = self.memory_config.sparse_embedder
             elif self.config.get('sparse_embedder'):
                 sparse_config_obj = self.config.get('sparse_embedder')
-            
+
             if sparse_config_obj:
                 try:
-                    # Handle SparseEmbedderConfig (BaseModel with provider and config) or dict format
-                    if hasattr(sparse_config_obj, 'provider') and hasattr(sparse_config_obj, 'config'):
-                        # It's a SparseEmbedderConfig (BaseModel) object
+                    # Handle BaseSparseEmbedderConfig, legacy wrapper, or dict format
+                    if isinstance(sparse_config_obj, BaseSparseEmbedderConfig):
+                        sparse_embedder_provider = sparse_config_obj._provider_name
+                        config_dict = sparse_config_obj.model_dump(exclude_none=True)
+                    elif hasattr(sparse_config_obj, 'provider') and hasattr(sparse_config_obj, 'config'):
+                        # Legacy wrapper with provider + config fields
                         sparse_embedder_provider = sparse_config_obj.provider
                         config_dict = sparse_config_obj.config or {}
                     elif isinstance(sparse_config_obj, dict):
@@ -260,16 +276,19 @@ class Memory(MemoryBase):
                         sparse_embedder_provider = sparse_config_obj.get('provider')
                         config_dict = sparse_config_obj.get('config', {})
                     else:
-                        logger.warning(f"Unknown sparse_embedder config format: {type(sparse_config_obj)}. Expected SparseEmbedderConfig or dict with 'provider' and 'config' keys.")
+                        logger.warning(
+                            "Unknown sparse_embedder config format: %s. Expected BaseSparseEmbedderConfig or dict with 'provider' and 'config' keys.",
+                            type(sparse_config_obj),
+                        )
                         sparse_embedder_provider = None
                         config_dict = {}
-                    
+
                     if sparse_embedder_provider:
                         self.sparse_embedder = SparseEmbedderFactory.create(sparse_embedder_provider, config_dict)
                         logger.info(f"Sparse embedder initialized: {sparse_embedder_provider}")
                 except Exception as e:
                     logger.warning(f"Failed to initialize sparse embedder: {e}")
-        
+
         # Initialize storage adapter with embedding service and sparse embedder service
         # Automatically select adapter based on sub_stores configuration
         sub_stores_list = self.config.get('sub_stores', [])
@@ -292,6 +311,9 @@ class Memory(MemoryBase):
         if audit_config is None:
             audit_config = self.config
         self.audit = AuditLogger(audit_config)
+
+        # Initialize memory optimizer
+        self.optimizer = MemoryOptimizer(self.storage, self.llm)
 
         # Save custom prompts from config
         if self.memory_config:
@@ -371,15 +393,22 @@ class Memory(MemoryBase):
             Boolean indicating whether graph store is enabled
         """
         if self.memory_config:
-            return self.memory_config.graph_store.enabled if self.memory_config.graph_store else False
+            # graph_store is None means disabled, otherwise enabled
+            return self.memory_config.graph_store is not None
         else:
             graph_store_config = self.config.get('graph_store', {})
-            return graph_store_config.get('enabled', False) if graph_store_config else False
+            # Support both old format (dict with 'enabled') and new format (config object)
+            if isinstance(graph_store_config, dict):
+                return graph_store_config.get('enabled', False) if graph_store_config else False
+            else:
+                # New format: config object means enabled
+                return graph_store_config is not None
 
     def _get_intelligent_memory_config(self) -> Dict[str, Any]:
         """
         Helper method to get intelligent memory configuration.
         Supports both "intelligence" and "intelligent_memory" config keys for backward compatibility.
+        Also merges "memory_decay" config into intelligent_memory config for Ebbinghaus algorithm.
 
         Returns:
             Merged intelligent memory configuration dictionary
@@ -390,6 +419,17 @@ class Memory(MemoryBase):
             # Merge custom_importance_evaluation_prompt from top level if present
             if self.memory_config.custom_importance_evaluation_prompt:
                 cfg["custom_importance_evaluation_prompt"] = self.memory_config.custom_importance_evaluation_prompt
+            # Merge memory_decay config if present (for Ebbinghaus algorithm parameters)
+            memory_decay_cfg = self.config.get("memory_decay", {})
+            if memory_decay_cfg:
+                # Merge memory_decay fields into intelligent_memory config
+                # These fields are used by EbbinghausAlgorithm
+                if memory_decay_cfg.get("base_retention") is not None:
+                    cfg["initial_retention"] = memory_decay_cfg["base_retention"]
+                if memory_decay_cfg.get("forgetting_rate") is not None:
+                    cfg["decay_rate"] = memory_decay_cfg["forgetting_rate"]
+                if memory_decay_cfg.get("reinforcement_factor") is not None:
+                    cfg["reinforcement_factor"] = memory_decay_cfg["reinforcement_factor"]
             return cfg
         else:
             # Fallback to dict access
@@ -399,6 +439,17 @@ class Memory(MemoryBase):
             # Merge custom_importance_evaluation_prompt from top level if present
             if "custom_importance_evaluation_prompt" in self.config:
                 merged_cfg["custom_importance_evaluation_prompt"] = self.config["custom_importance_evaluation_prompt"]
+            # Merge memory_decay config if present (for Ebbinghaus algorithm parameters)
+            memory_decay_cfg = (self.config or {}).get("memory_decay", {})
+            if memory_decay_cfg:
+                # Merge memory_decay fields into intelligent_memory config
+                # These fields are used by EbbinghausAlgorithm
+                if memory_decay_cfg.get("base_retention") is not None:
+                    merged_cfg["initial_retention"] = memory_decay_cfg["base_retention"]
+                if memory_decay_cfg.get("forgetting_rate") is not None:
+                    merged_cfg["decay_rate"] = memory_decay_cfg["forgetting_rate"]
+                if memory_decay_cfg.get("reinforcement_factor") is not None:
+                    merged_cfg["reinforcement_factor"] = memory_decay_cfg["reinforcement_factor"]
             return merged_cfg
 
     def _extract_facts(self, messages: Any) -> List[str]:
@@ -743,7 +794,7 @@ class Memory(MemoryBase):
         # Get intelligent memory config to check fallback setting
         intelligent_config = self._get_intelligent_memory_config()
         fallback_to_simple = intelligent_config.get("fallback_to_simple_add", False)
-        
+
         # Step 1: Extract facts from messages
         logger.info("Extracting facts from messages...")
         facts = self._extract_facts(messages)
@@ -1118,6 +1169,12 @@ class Memory(MemoryBase):
                 - "relations" (List, optional): Graph relations if graph store is enabled
         """
         try:
+            if not query or not query.strip():
+                return {
+                    "results": [],
+                    "relations": []
+                }
+            
             # Select embedding service based on filters (for sub-store routing)
             embedding_service = self._get_embedding_service(filters)
 
@@ -1133,7 +1190,8 @@ class Memory(MemoryBase):
                 run_id=run_id,
                 filters=filters,
                 limit=limit,
-                query=query  # Pass query text for hybrid search (vector + full-text + sparse vector)
+                query=query,  # Pass query text for hybrid search (vector + full-text + sparse vector)
+                threshold=threshold,  # Pass threshold to storage for native hybrid search condition check
             )
             
             # Process results with intelligence manager (only if enabled to avoid unnecessary calls)
@@ -1145,34 +1203,32 @@ class Memory(MemoryBase):
             # Intelligent plugin lifecycle management on search
             if self._intelligence_plugin and self._intelligence_plugin.enabled:
                 updates, deletes = self._intelligence_plugin.on_search(processed_results)
-                for mem_id, upd in updates:
-                    try:
-                        self.storage.update_memory(mem_id, {**upd}, user_id, agent_id)
-                    except Exception:
-                        continue
-                for mem_id in deletes:
-                    try:
-                        self.storage.delete_memory(mem_id, user_id, agent_id)
-                    except Exception:
-                        continue
+                if updates:
+                    for mem_id, upd in updates:
+                        _BACKGROUND_EXECUTOR.submit(self.storage.update_memory,mem_id,{**upd},user_id,agent_id)
+                    logger.info(f"Submitted {len(updates)} update operations to background executor")
+                if deletes:
+                    for mem_id in deletes:
+                        _BACKGROUND_EXECUTOR.submit(self.storage.delete_memory,mem_id,user_id,agent_id)
+                    logger.info(f"Submitted {len(deletes)} delete operations to background executor")
             
             # Transform results to match benchmark expected format
             # Benchmark expects: {"results": [{"memory": ..., "metadata": {...}, "score": ...}], "relations": [...]}
             transformed_results = []
             for result in processed_results:
                 score = result.get("score", 0.0)
-                
+
                 # Get quality score for threshold filtering
                 # Quality score represents absolute similarity quality (0-1 range)
                 # It's calculated from weighted average of all search paths' similarity scores
                 metadata = result.get("metadata", {})
                 quality_score = metadata.get("_quality_score")
-                
+
                 # If quality_score is not available (e.g., from older data or non-hybrid search),
                 # fall back to using the ranking score
                 if quality_score is None:
                     quality_score = score
-                
+
                 # Apply threshold filtering using quality score
                 # Only include results if threshold is None or quality_score >= threshold
                 if threshold is not None and quality_score < threshold:
@@ -1536,6 +1592,33 @@ class Memory(MemoryBase):
             logger.error(f"Failed to get all memories: {e}")
             raise
 
+    def optimize(self, strategy: str = "deduplicate", **kwargs) -> Dict[str, Any]:
+        """
+        Optimize memory storage.
+
+        Args:
+            strategy: "deduplicate" or "compress"
+            **kwargs: Additional args like threshold, user_id, dedup_strategy
+
+        Returns:
+            Optimization stats
+        """
+        if strategy == "deduplicate":
+            # Extract specific args
+            sub_strategy = kwargs.get("dedup_strategy", "exact")
+            return self.optimizer.deduplicate(
+                user_id=kwargs.get("user_id"),
+                strategy=sub_strategy,
+                threshold=kwargs.get("threshold", 0.95)
+            )
+        elif strategy == "compress":
+            return self.optimizer.compress(
+                user_id=kwargs.get("user_id"),
+                threshold=kwargs.get("threshold", 0.85)
+            )
+        else:
+            raise ValueError(f"Unknown optimization strategy: {strategy}")
+
     def get_statistics(
         self, user_id: Optional[str] = None, agent_id: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -1871,3 +1954,80 @@ class Memory(MemoryBase):
         converted_config = _auto_convert_config(config)
         
         return cls(config=converted_config, **kwargs)
+
+    def export_memories(
+        self,
+        format: str = "json",
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        limit: int = 1000,
+    ) -> str:
+        """Export memories to JSON or CSV format.
+        
+        Args:
+            format: Export format ("json" or "csv")
+            user_id: Filter by user ID
+            agent_id: Filter by agent ID
+            run_id: Filter by run ID
+            limit: Maximum number of memories to export
+            
+        Returns:
+            str: Exported content string
+        """
+        result = self.get_all(user_id=user_id, agent_id=agent_id, run_id=run_id, limit=limit)
+        memories = result.get("results", [])
+        
+        if format.lower() == "json":
+            return export_to_json(memories)
+        elif format.lower() == "csv":
+            return export_to_csv(memories)
+        else:
+            raise ValueError(f"Unsupported export format: {format}")
+
+    def import_memories(
+        self,
+        source: str,
+        format: str = "json",
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> Dict[str, int]:
+        """Import memories from JSON or CSV format.
+        
+        Args:
+            source: Content string to import
+            format: Import format ("json" or "csv")
+            user_id: Override user ID for imported memories
+            agent_id: Override agent ID for imported memories
+            
+        Returns:
+            Dict with success and failed counts
+        """
+        if format.lower() == "json":
+            memories = import_from_json(source)
+        elif format.lower() == "csv":
+            memories = import_from_csv(source)
+        else:
+            raise ValueError(f"Unsupported import format: {format}")
+        
+        success = 0
+        failed = 0
+        
+        for memory in memories:
+            try:
+                # Use overridden IDs if provided
+                mem_user_id = user_id or memory.get('user_id')
+                mem_agent_id = agent_id or memory.get('agent_id')
+                
+                self.add(
+                    content=memory['content'],
+                    user_id=mem_user_id,
+                    agent_id=mem_agent_id,
+                    metadata=memory.get('metadata', {}),
+                )
+                success += 1
+            except Exception as e:
+                logger.error(f"Failed to import memory: {e}")
+                failed += 1
+        
+        return {"success": success, "failed": failed}
