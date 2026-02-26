@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import { api, type Memory } from "../lib/api";
 
 import { Badge } from "@/components/ui/badge";
@@ -64,6 +65,7 @@ export const Route = createFileRoute("/memories")({
 const LIMIT = 20;
 
 function MemoriesPage() {
+  const { t } = useTranslation();
   const { user_id, agent_id, page } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const [searchTerm, setSearchTerm] = useState("");
@@ -84,12 +86,12 @@ function MemoriesPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: string | number) => api.deleteMemory(id),
     onSuccess: () => {
-      toast.success("Memory deleted successfully");
+      toast.success(t("memories.toast.deleted"));
       queryClient.invalidateQueries({ queryKey: ["memories"] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
     },
     onError: (err) => {
-      toast.error(`Failed to delete memory: ${err.message}`);
+      toast.error(t("memories.toast.deleteFailed", { error: err.message }));
     },
   });
 
@@ -109,7 +111,7 @@ function MemoriesPage() {
         <Card className="border-destructive/50 bg-destructive/5">
           <CardHeader>
             <CardTitle className="text-destructive flex items-center gap-2">
-              Error loading memories
+              {t("memories.error")}
             </CardTitle>
             <CardDescription className="text-destructive/80">
               {(error as Error).message}
@@ -126,10 +128,10 @@ function MemoriesPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <Database className="text-primary" />
-            Memories
+            {t("memories.title")}
           </h1>
           <p className="text-muted-foreground text-sm">
-            Manage and explore stored cognitive records.
+            {t("memories.subtitle")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -142,7 +144,7 @@ function MemoriesPage() {
             <RefreshCcw
               className={`size-4 mr-2 ${isLoading ? "animate-spin" : ""}`}
             />
-            Refresh
+            {t("memories.refresh")}
           </Button>
         </div>
       </div>
@@ -153,7 +155,7 @@ function MemoriesPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground size-4" />
               <Input
-                placeholder="Filter by content or category..."
+                placeholder={t("memories.filterPlaceholder")}
                 className="pl-9"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -162,7 +164,7 @@ function MemoriesPage() {
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm" className="h-9 gap-2">
                 <Filter className="size-4" />
-                Filters
+                {t("memories.filters")}
               </Button>
             </div>
           </div>
@@ -172,13 +174,13 @@ function MemoriesPage() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50">
-                  <TableHead className="w-[100px]">Category</TableHead>
-                  <TableHead>Content</TableHead>
+                  <TableHead className="w-[100px]">{t("memories.columns.category")}</TableHead>
+                  <TableHead>{t("memories.columns.content")}</TableHead>
                   <TableHead className="hidden md:table-cell">
-                    Metadata
+                    {t("memories.columns.metadata")}
                   </TableHead>
                   <TableHead className="hidden lg:table-cell">
-                    Created At
+                    {t("memories.columns.createdAt")}
                   </TableHead>
                   <TableHead className="w-[50px]"></TableHead>
                 </TableRow>
@@ -190,7 +192,7 @@ function MemoriesPage() {
                       <TableCell colSpan={5} className="h-16 text-center">
                         <div className="flex items-center justify-center gap-2 text-muted-foreground">
                           <RefreshCcw className="size-4 animate-spin" />
-                          Loading memories...
+                          {t("memories.loading")}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -264,12 +266,12 @@ function MemoriesPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                            <DropdownMenuLabel>{t("memories.columns.actions")}</DropdownMenuLabel>
                             <DropdownMenuItem
                               onClick={() => setSelectedMemory(memory)}
                             >
                               <Database className="size-4 mr-2" />
-                              View Details
+                              {t("memories.actions.viewDetails")}
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               className="text-destructive focus:text-destructive"
@@ -279,7 +281,7 @@ function MemoriesPage() {
                               }}
                             >
                               <Trash2 className="size-4 mr-2" />
-                              Delete Memory
+                              {t("memories.actions.delete")}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
@@ -287,10 +289,10 @@ function MemoriesPage() {
                                 e.stopPropagation();
                                 const json = JSON.stringify(memory, null, 2);
                                 navigator.clipboard.writeText(json);
-                                toast.success("JSON copied to clipboard");
+                                toast.success(t("memories.actions.jsonCopied"));
                               }}
                             >
-                              Copy Raw JSON
+                              {t("memories.actions.copyJson")}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -303,7 +305,7 @@ function MemoriesPage() {
                       colSpan={5}
                       className="h-32 text-center text-muted-foreground italic"
                     >
-                      No memories found.
+                      {t("memories.noMemories")}
                     </TableCell>
                   </TableRow>
                 )}
@@ -313,7 +315,7 @@ function MemoriesPage() {
 
           <div className="flex items-center justify-between mt-4">
             <p className="text-xs text-muted-foreground">
-              Showing {filteredMemories.length} of {total} memories
+              {t("memories.showing", { count: filteredMemories.length, total })}
             </p>
             <div className="flex items-center gap-2">
               <Button
@@ -327,10 +329,10 @@ function MemoriesPage() {
                 }
               >
                 <ChevronLeft className="size-4 mr-1" />
-                Prev
+                {t("memories.prev")}
               </Button>
               <span className="text-xs font-medium">
-                Page {page} of {totalPages || 1}
+                {t("memories.page", { page, total: totalPages || 1 })}
               </span>
               <Button
                 variant="outline"
@@ -342,7 +344,7 @@ function MemoriesPage() {
                   })
                 }
               >
-                Next
+                {t("memories.next")}
                 <ChevronRight className="size-4 ml-1" />
               </Button>
             </div>
@@ -356,14 +358,14 @@ function MemoriesPage() {
       >
         <SheetContent className="sm:max-w-xl overflow-y-auto">
           <SheetHeader>
-            <SheetTitle>Memory Details</SheetTitle>
-            <SheetDescription>ID: {selectedMemory?.id}</SheetDescription>
+            <SheetTitle>{t("memories.detail.title")}</SheetTitle>
+            <SheetDescription>{t("memories.detail.id")}: {selectedMemory?.id}</SheetDescription>
           </SheetHeader>
           {selectedMemory && (
             <div className="mt-6 space-y-6">
               <div className="space-y-2">
                 <h3 className="text-sm font-medium text-muted-foreground">
-                  Content
+                  {t("memories.detail.content")}
                 </h3>
                 <p className="text-sm bg-muted p-3 rounded-md whitespace-pre-wrap leading-relaxed">
                   {selectedMemory.content}
@@ -372,33 +374,33 @@ function MemoriesPage() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">Category</p>
+                  <p className="text-xs text-muted-foreground">{t("memories.detail.category")}</p>
                   <Badge variant="secondary">
                     {selectedMemory.category || "General"}
                   </Badge>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">Created At</p>
+                  <p className="text-xs text-muted-foreground">{t("memories.detail.createdAt")}</p>
                   <p className="text-sm">
                     {new Date(selectedMemory.created_at).toLocaleString()}
                   </p>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">User ID</p>
+                  <p className="text-xs text-muted-foreground">{t("memories.detail.userId")}</p>
                   <p className="text-sm font-mono">
-                    {selectedMemory.user_id || "None"}
+                    {selectedMemory.user_id || t("memories.detail.none")}
                   </p>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">Agent ID</p>
+                  <p className="text-xs text-muted-foreground">{t("memories.detail.agentId")}</p>
                   <p className="text-sm font-mono">
-                    {selectedMemory.agent_id || "None"}
+                    {selectedMemory.agent_id || t("memories.detail.none")}
                   </p>
                 </div>
               </div>
 
               <div className="space-y-2">
-                <h3 className="text-sm font-medium">Metadata</h3>
+                <h3 className="text-sm font-medium">{t("memories.detail.metadata")}</h3>
                 <div className="bg-muted p-3 rounded-md overflow-x-auto">
                   <pre className="text-xs">
                     {JSON.stringify(selectedMemory.metadata, null, 2)}
@@ -408,7 +410,7 @@ function MemoriesPage() {
 
               {selectedMemory.run_id && (
                 <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">Run ID</p>
+                  <p className="text-xs text-muted-foreground">{t("memories.detail.runId")}</p>
                   <p className="text-sm font-mono">{selectedMemory.run_id}</p>
                 </div>
               )}

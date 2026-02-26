@@ -10,6 +10,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Bar,
   BarChart,
@@ -87,6 +88,7 @@ const chartConfig = {
 function OverviewPage() {
   const { user_id, agent_id } = Route.useSearch();
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [apiKeyInput, setApiKeyInput] = useState(
     localStorage.getItem("powermem_api_key") || "",
   );
@@ -137,12 +139,12 @@ function OverviewPage() {
         refetchStatus(),
         refetchQuality(),
       ]);
-      toast.success("Data refreshed", {
-        description: "All statistics have been updated",
+      toast.success(t("dashboard.refresh"), {
+        description: t("common.noData"),
       });
     } catch (error) {
-      toast.error("Failed to refresh", {
-        description: "Please check your network connection or try again later",
+      toast.error(t("common.error"), {
+        description: t("common.tryAgain"),
       });
     } finally {
       setIsRefreshing(false);
@@ -213,7 +215,7 @@ function OverviewPage() {
           <CardHeader>
             <CardTitle className="text-destructive flex items-center gap-2">
               <AlertCircle size={20} />
-              Error loading statistics
+              {t("dashboard.error.title")}
             </CardTitle>
             <CardDescription className="text-destructive/80">
               {(error as Error).message}
@@ -223,13 +225,13 @@ function OverviewPage() {
             <div className="flex flex-col sm:flex-row gap-2">
               <Input
                 type="password"
-                placeholder="Enter API Key"
+                placeholder={t("dashboard.error.apiKeyPlaceholder")}
                 className="max-w-xs"
                 value={apiKeyInput}
                 onChange={(e) => setApiKeyInput(e.target.value)}
               />
               <Button variant="destructive" onClick={saveApiKey}>
-                Update Key & Retry
+                {t("dashboard.error.updateKey")}
               </Button>
             </div>
           </CardContent>
@@ -269,7 +271,7 @@ function OverviewPage() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            Memory Overview
+            {t("dashboard.title")}
             {user_id && (
               <Badge variant="secondary" className="font-mono text-[10px]">
                 USER: {user_id}
@@ -277,7 +279,7 @@ function OverviewPage() {
             )}
           </h1>
           <p className="text-muted-foreground text-sm">
-            Real-time analytics for your intelligent memory system.
+            {t("dashboard.subtitle")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -286,10 +288,10 @@ function OverviewPage() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="7d">Last 7 days</SelectItem>
-              <SelectItem value="30d">Last 30 days</SelectItem>
-              <SelectItem value="90d">Last 90 days</SelectItem>
-              <SelectItem value="all">All time</SelectItem>
+              <SelectItem value="7d">{t("dashboard.timeRange.last7days")}</SelectItem>
+              <SelectItem value="30d">{t("dashboard.timeRange.last30days")}</SelectItem>
+              <SelectItem value="90d">{t("dashboard.timeRange.last90days")}</SelectItem>
+              <SelectItem value="all">{t("dashboard.timeRange.allTime")}</SelectItem>
             </SelectContent>
           </Select>
           <Button
@@ -299,7 +301,7 @@ function OverviewPage() {
             disabled={isRefreshing}
           >
             <RefreshCcw className={`size-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-            {isRefreshing ? "Refreshing..." : "Refresh"}
+            {isRefreshing ? t("dashboard.refreshing") : t("dashboard.refresh")}
           </Button>
           {user_id && (
             <Button
@@ -312,7 +314,7 @@ function OverviewPage() {
                 })
               }
             >
-              Clear Filters
+              {t("dashboard.clearFilters")}
             </Button>
           )}
         </div>
@@ -322,32 +324,32 @@ function OverviewPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           icon={<Database className="size-4" />}
-          label="Total Memories"
+          label={t("dashboard.stats.totalMemories")}
           value={stats.total_memories.toLocaleString()}
-          description="Stored vector records"
+          description={t("dashboard.stats.totalMemoriesDesc")}
         />
         <StatCard
           icon={<TrendingUp className="size-4" />}
-          label="Avg. Importance"
+          label={t("dashboard.stats.avgImportance")}
           value={stats.avg_importance.toFixed(2)}
-          description="Aggregate priority score"
+          description={t("dashboard.stats.avgImportanceDesc")}
         />
         <StatCard
           icon={<Activity className="size-4" />}
-          label="Access Density"
+          label={t("dashboard.stats.accessDensity")}
           value={(
             stats.top_accessed.reduce(
               (acc, curr) => acc + curr.access_count,
               0,
             ) / (stats.total_memories || 1)
           ).toFixed(2)}
-          description="Average hits per record"
+          description={t("dashboard.stats.accessDensityDesc")}
         />
         <StatCard
           icon={<Clock className="size-4" />}
-          label="Unique Dates"
+          label={t("dashboard.stats.uniqueDates")}
           value={trendData.length.toString()}
-          description="Days with activity"
+          description={t("dashboard.stats.uniqueDatesDesc")}
         />
       </div>
 
@@ -363,9 +365,9 @@ function OverviewPage() {
             <CardHeader>
               <CardTitle className="text-sm font-medium flex items-center gap-2">
                 <TrendingUp className="size-4 text-primary" />
-                Growth Trend
+                {t("dashboard.charts.growthTrend")}
               </CardTitle>
-              <CardDescription>Daily memory creation volume</CardDescription>
+              <CardDescription>{t("dashboard.charts.growthTrendDesc")}</CardDescription>
             </CardHeader>
             <CardContent>
               <ChartContainer config={chartConfig} className="h-[300px] w-full">
@@ -402,9 +404,9 @@ function OverviewPage() {
           <CardHeader>
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <BarChart3 className="size-4 text-primary" />
-              Memory Categories
+              {t("dashboard.charts.memoryCategories")}
             </CardTitle>
-            <CardDescription>Distribution by classification</CardDescription>
+            <CardDescription>{t("dashboard.charts.memoryCategoriesDesc")}</CardDescription>
           </CardHeader>
           <CardContent>
             <ChartContainer
@@ -443,18 +445,18 @@ function OverviewPage() {
           <CardHeader>
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Activity className="size-4 text-primary" />
-              Hot Memories
+              {t("dashboard.charts.hotMemories")}
             </CardTitle>
             <CardDescription>
-              Top retrieved records by access count
+              {t("dashboard.charts.hotMemoriesDesc")}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Content Snippet</TableHead>
-                  <TableHead className="text-right">Hits</TableHead>
+                  <TableHead>{t("dashboard.charts.contentSnippet")}</TableHead>
+                  <TableHead className="text-right">{t("dashboard.charts.hits")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -476,7 +478,7 @@ function OverviewPage() {
                       colSpan={2}
                       className="text-center py-8 text-muted-foreground text-xs"
                     >
-                      No access records found
+                      {t("dashboard.charts.noAccessRecords")}
                     </TableCell>
                   </TableRow>
                 )}
@@ -492,9 +494,9 @@ function OverviewPage() {
           <CardHeader>
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Clock className="size-4 text-primary" />
-              Retention Age
+              {t("dashboard.charts.retentionAge")}
             </CardTitle>
-            <CardDescription>Memory lifecycle distribution</CardDescription>
+            <CardDescription>{t("dashboard.charts.retentionAgeDesc")}</CardDescription>
           </CardHeader>
           <CardContent>
             <ChartContainer config={chartConfig} className="h-[300px] w-full">

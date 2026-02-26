@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { RefreshCcw, Search, User, Users } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api } from "../lib/api";
 
 import {
@@ -18,6 +19,7 @@ export const Route = createFileRoute("/users")({
 });
 
 function UsersPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState("");
 
@@ -44,7 +46,7 @@ function UsersPage() {
         <Card className="border-destructive/50 bg-destructive/5">
           <CardHeader>
             <CardTitle className="text-destructive flex items-center gap-2">
-              Error loading users
+              {t("users.error")}
             </CardTitle>
             <CardDescription className="text-destructive/80">
               {(error as Error).message}
@@ -64,10 +66,10 @@ function UsersPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
           <Users className="text-primary" />
-          User Management
+          {t("users.title")}
         </h1>
         <p className="text-muted-foreground text-sm">
-          Browse and analyze cognitive profiles of unique users in the system.
+          {t("users.subtitle")}
         </p>
       </div>
 
@@ -77,7 +79,7 @@ function UsersPage() {
           size={18}
         />
         <Input
-          placeholder="Search by User ID..."
+          placeholder={t("users.searchPlaceholder")}
           className="pl-10"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
@@ -114,7 +116,7 @@ function UsersPage() {
         ) : (
           <Card className="w-full border-dashed bg-muted/20">
             <CardContent className="p-12 text-center text-muted-foreground italic">
-              No users found matching "{searchTerm}"
+              {t("users.noResults", { term: searchTerm })}
             </CardContent>
           </Card>
         )}

@@ -7,70 +7,67 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, CheckCircle2, AlertCircle } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { MemoryQualityMetrics } from "../types/api";
 
 interface MemoryQualityCardProps {
   quality?: MemoryQualityMetrics;
 }
 
-/**
- * Get quality status display based on ratio
- */
-function getQualityStatus(ratio: number) {
-  if (ratio <= 0.1) {
-    return {
-      icon: CheckCircle2,
-      text: "Excellent",
-      className: "bg-green-500 hover:bg-green-600",
-      textColor: "text-green-600",
-    };
-  } else if (ratio <= 0.2) {
-    return {
-      icon: CheckCircle2,
-      text: "Good",
-      className: "bg-blue-500 hover:bg-blue-600",
-      textColor: "text-blue-600",
-    };
-  } else if (ratio <= 0.5) {
-    return {
-      icon: AlertCircle,
-      text: "Fair",
-      className: "bg-yellow-500 hover:bg-yellow-600",
-      textColor: "text-yellow-600",
-    };
-  } else {
-    return {
-      icon: AlertTriangle,
-      text: "Poor",
-      className: "bg-red-500 hover:bg-red-600",
-      textColor: "text-red-600",
-    };
-  }
-}
-
-/**
- * Format quality criteria key to human-readable label
- */
-function formatCriteriaLabel(key: string): string {
-  const labels: Record<string, string> = {
-    missing_metadata: "Missing Metadata",
-    empty_content: "Empty Content",
-    no_embedding: "No Embedding",
-    low_importance: "Low Importance",
-  };
-  return labels[key] || key;
-}
-
 export function MemoryQualityCard({ quality }: MemoryQualityCardProps) {
+  const { t } = useTranslation();
+
+  function getQualityStatus(ratio: number) {
+    if (ratio <= 0.1) {
+      return {
+        icon: CheckCircle2,
+        text: t("dashboard.quality.statusGood"),
+        className: "bg-green-500 hover:bg-green-600",
+        textColor: "text-green-600",
+      };
+    } else if (ratio <= 0.2) {
+      return {
+        icon: CheckCircle2,
+        text: t("dashboard.quality.statusGood"),
+        className: "bg-blue-500 hover:bg-blue-600",
+        textColor: "text-blue-600",
+      };
+    } else if (ratio <= 0.5) {
+      return {
+        icon: AlertCircle,
+        text: t("dashboard.quality.statusWarning"),
+        className: "bg-yellow-500 hover:bg-yellow-600",
+        textColor: "text-yellow-600",
+      };
+    } else {
+      return {
+        icon: AlertTriangle,
+        text: t("dashboard.quality.statusCritical"),
+        className: "bg-red-500 hover:bg-red-600",
+        textColor: "text-red-600",
+      };
+    }
+  }
+
+  function formatCriteriaLabel(key: string): string {
+    const keyMap: Record<string, string> = {
+      missing_metadata: "dashboard.quality.missingMetadata",
+      empty_content: "dashboard.quality.emptyContent",
+      no_embedding: "dashboard.quality.noEmbedding",
+      low_importance: "dashboard.quality.lowImportance",
+    };
+    return keyMap[key] ? t(keyMap[key]) : key;
+  }
+
   if (!quality) {
     return (
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <AlertTriangle className="size-5" />
-            Memory Quality
+            {t("dashboard.quality.title")}
           </CardTitle>
-          <CardDescription>Loading quality metrics...</CardDescription>
+          <CardDescription>{t("dashboard.quality.loading")}</CardDescription>
         </CardHeader>
       </Card>
     );
@@ -85,10 +82,10 @@ export function MemoryQualityCard({ quality }: MemoryQualityCardProps) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <AlertTriangle className="size-5" />
-          Memory Quality
+          {t("dashboard.quality.title")}
         </CardTitle>
         <CardDescription>
-          Quality analysis of {quality.total_memories.toLocaleString()} memories
+          {quality.total_memories.toLocaleString()} {t("dashboard.quality.memoriesAnalyzed")}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -97,7 +94,7 @@ export function MemoryQualityCard({ quality }: MemoryQualityCardProps) {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-muted-foreground mb-1">
-                Low Quality Ratio
+                {t("dashboard.quality.lowQualityRatio")}
               </p>
               <div className="flex items-baseline gap-2">
                 <span className={`text-4xl font-bold ${qualityStatus.textColor}`}>
@@ -109,7 +106,7 @@ export function MemoryQualityCard({ quality }: MemoryQualityCardProps) {
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground mt-1">
-                {quality.low_quality_count} / {quality.total_memories} memories
+                {quality.low_quality_count} / {quality.total_memories}
               </p>
             </div>
           </div>
@@ -118,7 +115,7 @@ export function MemoryQualityCard({ quality }: MemoryQualityCardProps) {
           {quality.quality_criteria &&
             Object.keys(quality.quality_criteria).length > 0 && (
               <div className="pt-4 border-t">
-                <h4 className="text-sm font-medium mb-3">Quality Issues</h4>
+                <h4 className="text-sm font-medium mb-3">{t("dashboard.quality.qualityIssues")}</h4>
                 <div className="space-y-2">
                   {Object.entries(quality.quality_criteria)
                     .filter(([_, count]) => count > 0)
@@ -158,7 +155,7 @@ export function MemoryQualityCard({ quality }: MemoryQualityCardProps) {
               <div className="pt-4 border-t">
                 <div className="flex items-center gap-2 text-sm text-green-600">
                   <CheckCircle2 className="size-4" />
-                  <span>No quality issues detected</span>
+                  <span>{t("dashboard.quality.statusGood")}</span>
                 </div>
               </div>
             )}

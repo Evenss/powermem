@@ -15,6 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Activity, CheckCircle2, AlertCircle, XCircle } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { SystemStatus } from "../types/api";
 
 interface SystemHealthCardProps {
@@ -37,54 +38,55 @@ function formatUptime(seconds: number): string {
   return parts.length > 0 ? parts.join(" ") : "< 1m";
 }
 
-/**
- * Get status badge variant and icon
- */
-function getStatusDisplay(status: string) {
-  switch (status) {
-    case "operational":
-    case "healthy":
-      return {
-        variant: "default" as const,
-        icon: CheckCircle2,
-        text: status === "operational" ? "Operational" : "Healthy",
-        className: "bg-green-500 hover:bg-green-600",
-      };
-    case "degraded":
-      return {
-        variant: "secondary" as const,
-        icon: AlertCircle,
-        text: "Degraded",
-        className: "bg-yellow-500 hover:bg-yellow-600",
-      };
-    case "down":
-    case "unavailable":
-      return {
-        variant: "destructive" as const,
-        icon: XCircle,
-        text: status === "down" ? "Down" : "Unavailable",
-        className: "bg-red-500 hover:bg-red-600",
-      };
-    default:
-      return {
-        variant: "outline" as const,
-        icon: Activity,
-        text: "Unknown",
-        className: "",
-      };
-  }
-}
-
 export function SystemHealthCard({ status }: SystemHealthCardProps) {
+  const { t } = useTranslation();
+
+  function getStatusDisplay(status: string) {
+    switch (status) {
+      case "operational":
+      case "healthy":
+        return {
+          variant: "default" as const,
+          icon: CheckCircle2,
+          text: status === "operational"
+            ? t("dashboard.systemHealth.statusOperational")
+            : t("dashboard.systemHealth.statusOperational"),
+          className: "bg-green-500 hover:bg-green-600",
+        };
+      case "degraded":
+        return {
+          variant: "secondary" as const,
+          icon: AlertCircle,
+          text: t("dashboard.systemHealth.statusDegraded"),
+          className: "bg-yellow-500 hover:bg-yellow-600",
+        };
+      case "down":
+      case "unavailable":
+        return {
+          variant: "destructive" as const,
+          icon: XCircle,
+          text: t("dashboard.systemHealth.statusDown"),
+          className: "bg-red-500 hover:bg-red-600",
+        };
+      default:
+        return {
+          variant: "outline" as const,
+          icon: Activity,
+          text: status,
+          className: "",
+        };
+    }
+  }
+
   if (!status) {
     return (
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Activity className="size-5" />
-            System Health
+            {t("dashboard.systemHealth.title")}
           </CardTitle>
-          <CardDescription>Loading system status...</CardDescription>
+          <CardDescription>{t("dashboard.systemHealth.loading")}</CardDescription>
         </CardHeader>
       </Card>
     );
@@ -98,7 +100,7 @@ export function SystemHealthCard({ status }: SystemHealthCardProps) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Activity className="size-5" />
-          System Health
+          {t("dashboard.systemHealth.title")}
         </CardTitle>
         <CardDescription>
           Real-time system status and dependency health
@@ -109,18 +111,18 @@ export function SystemHealthCard({ status }: SystemHealthCardProps) {
           {/* System Status Overview */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Status</p>
+              <p className="text-sm text-muted-foreground">{t("dashboard.systemHealth.status")}</p>
               <Badge className={systemStatus.className}>
                 <StatusIcon className="size-3 mr-1" />
                 {systemStatus.text}
               </Badge>
             </div>
             <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Version</p>
+              <p className="text-sm text-muted-foreground">{t("dashboard.systemHealth.version")}</p>
               <p className="text-sm font-medium">{status.version}</p>
             </div>
             <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Uptime</p>
+              <p className="text-sm text-muted-foreground">{t("dashboard.systemHealth.uptime")}</p>
               <p className="text-sm font-medium">
                 {formatUptime(status.uptime_seconds)}
               </p>
@@ -132,13 +134,13 @@ export function SystemHealthCard({ status }: SystemHealthCardProps) {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t">
               {status.storage_type && (
                 <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Vector Store</p>
+                  <p className="text-sm text-muted-foreground">{t("dashboard.systemHealth.vectorStore")}</p>
                   <p className="text-sm font-medium">{status.storage_type}</p>
                 </div>
               )}
               {status.llm_provider && (
                 <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">LLM Provider</p>
+                  <p className="text-sm text-muted-foreground">{t("dashboard.systemHealth.llm")}</p>
                   <p className="text-sm font-medium">{status.llm_provider}</p>
                 </div>
               )}
@@ -149,13 +151,13 @@ export function SystemHealthCard({ status }: SystemHealthCardProps) {
           {status.dependencies &&
             Object.keys(status.dependencies).length > 0 && (
               <div className="pt-2 border-t">
-                <h4 className="text-sm font-medium mb-2">Dependencies</h4>
+                <h4 className="text-sm font-medium mb-2">{t("dashboard.systemHealth.dependencies")}</h4>
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Service</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Latency</TableHead>
+                      <TableHead>{t("dashboard.systemHealth.status")}</TableHead>
+                      <TableHead className="text-right">{t("dashboard.systemHealth.latency")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
