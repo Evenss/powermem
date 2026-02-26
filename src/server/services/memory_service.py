@@ -272,6 +272,33 @@ class MemoryService:
                 status_code=500,
             )
     
+    def count_memories(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> int:
+        """
+        Count total memories matching the filters.
+        
+        Args:
+            user_id: Filter by user ID
+            agent_id: Filter by agent ID
+            
+        Returns:
+            Total count of memories
+        """
+        try:
+            # Use the new count_all method from core Memory
+            count = self.memory.count_all(
+                user_id=user_id,
+                agent_id=agent_id,
+            )
+            return count
+            
+        except Exception as e:
+            logger.error(f"Failed to count memories: {e}", exc_info=True)
+            return 0
+    
     def update_memory(
         self,
         memory_id: int,

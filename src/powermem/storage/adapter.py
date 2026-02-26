@@ -550,6 +550,29 @@ class StorageAdapter:
         
         return memories
     
+    def count_all_memories(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> int:
+        """Count all memories with optional filtering."""
+        # Build filters for database-level filtering
+        filters = {}
+        if user_id:
+            filters["user_id"] = user_id
+        if agent_id:
+            filters["agent_id"] = agent_id
+        if run_id:
+            filters["run_id"] = run_id
+        
+        # Use vector store's count method
+        count = self.vector_store.count(
+            filters=filters if filters else None
+        )
+        
+        return count
+    
     def clear_memories(
         self,
         user_id: Optional[str] = None,

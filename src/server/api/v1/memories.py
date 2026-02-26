@@ -172,6 +172,13 @@ async def list_memories(
     service: MemoryService = Depends(get_memory_service),
 ):
     """List memories with pagination and sorting"""
+    # Get total count first
+    total_count = service.count_memories(
+        user_id=user_id,
+        agent_id=agent_id,
+    )
+    
+    # Get paginated memories
     memories = service.list_memories(
         user_id=user_id,
         agent_id=agent_id,
@@ -185,7 +192,7 @@ async def list_memories(
     
     response_data = MemoryListResponse(
         memories=memory_responses,
-        total=len(memory_responses),
+        total=total_count,  # Use actual total count
         limit=limit,
         offset=offset,
     )

@@ -68,12 +68,13 @@ function MemoriesPage() {
   const { t } = useTranslation();
   const { user_id, agent_id, page } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
+  const [searchInput, setSearchInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedMemory, setSelectedMemory] = useState<Memory | null>(null);
   const queryClient = useQueryClient();
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["memories", user_id, agent_id, page],
+    queryKey: ["memories", user_id, agent_id, page, searchTerm],
     queryFn: () =>
       api.getMemories({
         user_id,
@@ -99,11 +100,28 @@ function MemoriesPage() {
   const total = data?.total || 0;
   const totalPages = Math.ceil(total / LIMIT);
 
-  const filteredMemories = memories.filter(
-    (m) =>
-      m.content.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      m.category?.toLowerCase().includes(searchTerm.toLowerCase()),
-  );
+  const filteredMemories = searchTerm
+    ? memories.filter(
+        (m) =>
+          m.content.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          m.category?.toLowerCase().includes(searchTerm.toLowerCase()),
+      )
+    : memories;
+
+  const handleFilter = () => {
+    setSearchTerm(searchInput);
+    if (page !== 1) {
+      navigate({
+        search: (prev: any) => ({ ...prev, page: 1 }),
+      });
+    }
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      handleFilter();
+    }
+  };
 
   if (error) {
     return (
@@ -157,12 +175,18 @@ function MemoriesPage() {
               <Input
                 placeholder={t("memories.filterPlaceholder")}
                 className="pl-9"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onKeyPress={handleKeyPress}
               />
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" className="h-9 gap-2">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="h-9 gap-2"
+                onClick={handleFilter}
+              >
                 <Filter className="size-4" />
                 {t("memories.filters")}
               </Button>
@@ -315,7 +339,9 @@ function MemoriesPage() {
 
           <div className="flex items-center justify-between mt-4">
             <p className="text-xs text-muted-foreground">
-              {t("memories.showing", { count: filteredMemories.length, total })}
+              {searchTerm
+                ? `${filteredMemories.length} filtered results from page ${page}`
+                : t("memories.showing", { count: memories.length, total })}
             </p>
             <div className="flex items-center gap-2">
               <Button
