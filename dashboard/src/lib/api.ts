@@ -111,8 +111,6 @@ export const api = {
   getStats: (filters?: { user_id?: string; agent_id?: string; time_range?: string }) =>
     fetchWithAuth<MemoryStats>("/memories/stats", { params: filters }),
 
-  getUsers: () => fetchWithAuth<string[]>("/memories/users"),
-
   getMemories: (params?: {
     user_id?: string;
     agent_id?: string;

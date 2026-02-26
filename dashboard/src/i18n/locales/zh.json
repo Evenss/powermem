@@ -3,7 +3,6 @@
     "overview": "概览",
     "dashboard": "仪表盘",
     "memories": "记忆管理",
-    "users": "用户管理",
     "settings": "设置",
     "application": "应用",
     "dashboardSubtitle": "仪表盘"
@@ -148,12 +147,5 @@
       "failed": "保存失败",
       "failedDesc": "无法将 API 密钥保存到您的浏览器。"
     }
-  },
-  "users": {
-    "title": "用户管理",
-    "subtitle": "浏览和分析系统中独特用户的认知配置文件。",
-    "searchPlaceholder": "按用户 ID 搜索...",
-    "noResults": "未找到匹配 \"{{term}}\" 的用户",
-    "error": "加载用户失败"
   }
 }

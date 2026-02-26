@@ -3,7 +3,6 @@ import {
   Database,
   LayoutDashboard,
   Settings,
-  Users,
 } from "lucide-react";
 
 import {
@@ -35,11 +34,6 @@ export function AppSidebar() {
       title: t("nav.memories"),
       url: "/memories",
       icon: Database,
-    },
-    {
-      title: t("nav.users"),
-      url: "/users",
-      icon: Users,
     },
     {
       title: t("nav.settings"),

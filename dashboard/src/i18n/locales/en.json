@@ -3,7 +3,6 @@
     "overview": "Overview",
     "dashboard": "Dashboard",
     "memories": "Memories",
-    "users": "Users",
     "settings": "Settings",
     "application": "Application",
     "dashboardSubtitle": "Dashboard"
@@ -148,12 +147,5 @@
       "failed": "Save failed",
       "failedDesc": "Could not save the API key to your browser."
     }
-  },
-  "users": {
-    "title": "User Management",
-    "subtitle": "Browse and analyze cognitive profiles of unique users in the system.",
-    "searchPlaceholder": "Search by User ID...",
-    "noResults": "No users found matching \"{{term}}\"",
-    "error": "Error loading users"
   }
 }
