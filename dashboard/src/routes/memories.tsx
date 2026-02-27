@@ -457,13 +457,13 @@ function MemoriesPage() {
         open={!!selectedMemory}
         onOpenChange={(open) => !open && setSelectedMemory(null)}
       >
-        <SheetContent className="sm:max-w-xl overflow-y-auto">
-          <SheetHeader>
+        <SheetContent className="sm:max-w-xl overflow-y-auto p-6">
+          <SheetHeader className="space-y-2">
             <SheetTitle>{t("memories.detail.title")}</SheetTitle>
             <SheetDescription>{t("memories.detail.id")}: {selectedMemory?.memory_id || selectedMemory?.id}</SheetDescription>
           </SheetHeader>
           {selectedMemory && (
-            <div className="mt-6 space-y-6">
+            <div className="mt-6 space-y-6 px-1">
               <div className="space-y-2">
                 <h3 className="text-sm font-medium text-muted-foreground">
                   {t("memories.detail.content")}
