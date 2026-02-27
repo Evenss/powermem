@@ -4,6 +4,7 @@ import { Outlet, createRootRouteWithContext } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 
 import { AppSidebar } from "@/components/app-sidebar";
+import { AboutDialog } from "@/components/about-dialog";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Separator } from "@/components/ui/separator";
@@ -34,6 +35,7 @@ function RootLayout() {
             <Separator orientation="vertical" className="mr-2 h-4" />
           </div>
           <div className="ml-auto flex items-center gap-1">
+            <AboutDialog />
             <LanguageSwitcher />
             <ThemeToggle />
           </div>

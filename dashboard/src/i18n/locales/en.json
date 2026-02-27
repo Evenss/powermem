@@ -13,6 +13,14 @@
     "refresh": "Refresh",
     "refreshing": "Refreshing...",
     "clearFilters": "Clear Filters",
+    "about": {
+      "title": "About",
+      "subtitle": "PowerMem Dashboard Information",
+      "version": "Version",
+      "website": "Website",
+      "copyright": "Copyright",
+      "allRightsReserved": "All rights reserved."
+    },
     "stats": {
       "totalMemories": "Total Memories",
       "totalMemoriesDesc": "Stored vector records",

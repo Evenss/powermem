@@ -13,6 +13,14 @@
     "refresh": "刷新",
     "refreshing": "刷新中...",
     "clearFilters": "清除筛选",
+    "about": {
+      "title": "关于",
+      "subtitle": "PowerMem 仪表盘信息",
+      "version": "版本",
+      "website": "官网",
+      "copyright": "版权",
+      "allRightsReserved": "版权所有。"
+    },
     "stats": {
       "totalMemories": "总记忆数",
       "totalMemoriesDesc": "已存储向量记录",
