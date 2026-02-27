@@ -9,10 +9,16 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as UserProfileRouteImport } from './routes/user-profile'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as MemoriesRouteImport } from './routes/memories'
 import { Route as IndexRouteImport } from './routes/index'
 
+const UserProfileRoute = UserProfileRouteImport.update({
+  id: '/user-profile',
+  path: '/user-profile',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -33,34 +39,45 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/memories': typeof MemoriesRoute
   '/settings': typeof SettingsRoute
+  '/user-profile': typeof UserProfileRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/memories': typeof MemoriesRoute
   '/settings': typeof SettingsRoute
+  '/user-profile': typeof UserProfileRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/memories': typeof MemoriesRoute
   '/settings': typeof SettingsRoute
+  '/user-profile': typeof UserProfileRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/memories' | '/settings'
+  fullPaths: '/' | '/memories' | '/settings' | '/user-profile'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/memories' | '/settings'
-  id: '__root__' | '/' | '/memories' | '/settings'
+  to: '/' | '/memories' | '/settings' | '/user-profile'
+  id: '__root__' | '/' | '/memories' | '/settings' | '/user-profile'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   MemoriesRoute: typeof MemoriesRoute
   SettingsRoute: typeof SettingsRoute
+  UserProfileRoute: typeof UserProfileRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/user-profile': {
+      id: '/user-profile'
+      path: '/user-profile'
+      fullPath: '/user-profile'
+      preLoaderRoute: typeof UserProfileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings': {
       id: '/settings'
       path: '/settings'
@@ -89,6 +106,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   MemoriesRoute: MemoriesRoute,
   SettingsRoute: SettingsRoute,
+  UserProfileRoute: UserProfileRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

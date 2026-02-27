@@ -44,6 +44,22 @@ export interface MemoryList {
   offset: number;
 }
 
+export interface UserProfile {
+  id: number;
+  user_id: string;
+  profile_content?: string;
+  topics?: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserProfileListResponse {
+  profiles: UserProfile[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface ApiResponse<T> {
   success: boolean;
   data: T;
@@ -135,4 +151,12 @@ export const api = {
 
   getMemoryQuality: (params?: { user_id?: string; agent_id?: string; time_range?: string }) =>
     fetchWithAuth<MemoryQualityMetrics>("/memories/quality", { params }),
+
+  getAllUserProfiles: (user_id?: string, limit?: number, offset?: number) => {
+    const params: Record<string, any> = {};
+    if (user_id) params.user_id = user_id;
+    if (limit !== undefined) params.limit = limit;
+    if (offset !== undefined) params.offset = offset;
+    return fetchWithAuth<UserProfileListResponse>("/users/profiles", { params });
+  },
 };

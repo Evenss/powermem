@@ -3,6 +3,7 @@
     "overview": "Overview",
     "dashboard": "Dashboard",
     "memories": "Memories",
+    "userProfile": "UserProfile",
     "settings": "Settings",
     "application": "Application",
     "dashboardSubtitle": "Dashboard"
@@ -165,6 +166,40 @@
       "savedDesc": "API Key has been saved to local storage.",
       "failed": "Save failed",
       "failedDesc": "Could not save the API key to your browser."
+    }
+  },
+  "userProfile": {
+    "title": "User Profile",
+    "description": "View and manage user profiles",
+    "filterByUserId": "Filter by User ID",
+    "search": "Search",
+    "searching": "Searching...",
+    "filterApplied": "Filter applied successfully",
+    "filterCleared": "Filter applied successfully",
+    "clearFilter": "Clear",
+    "noProfilesEnabled": "User profiling is not enabled",
+    "noProfiles": "No user profiles found",
+    "columns": {
+      "userId": "User ID",
+      "profileContent": "Profile Content",
+      "topics": "Topics",
+      "updatedAt": "Updated At",
+      "actions": "Actions"
+    },
+    "viewDetails": "View Details",
+    "loading": "Loading profiles...",
+    "showing": "Showing {{count}} of {{total}} profiles",
+    "page": "Page {{page}} of {{total}}",
+    "prev": "Prev",
+    "next": "Next",
+    "detail": {
+      "title": "Profile Details",
+      "userId": "User ID",
+      "content": "Content",
+      "topics": "Topics",
+      "createdAt": "Created At",
+      "updatedAt": "Updated At",
+      "none": "None"
     }
   }
 }

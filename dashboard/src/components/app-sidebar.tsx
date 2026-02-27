@@ -3,6 +3,7 @@ import {
   Database,
   LayoutDashboard,
   Settings,
+  UserCircle,
 } from "lucide-react";
 
 import {
@@ -34,6 +35,11 @@ export function AppSidebar() {
       title: t("nav.memories"),
       url: "/memories",
       icon: Database,
+    },
+    {
+      title: t("nav.userProfile"),
+      url: "/user-profile",
+      icon: UserCircle,
     },
     {
       title: t("nav.settings"),

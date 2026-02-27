@@ -3,6 +3,7 @@
     "overview": "概览",
     "dashboard": "仪表盘",
     "memories": "记忆管理",
+    "userProfile": "用户画像",
     "settings": "设置",
     "application": "应用",
     "dashboardSubtitle": "仪表盘"
@@ -165,6 +166,40 @@
       "savedDesc": "API 密钥已保存到本地存储。",
       "failed": "保存失败",
       "failedDesc": "无法将 API 密钥保存到您的浏览器。"
+    }
+  },
+  "userProfile": {
+    "title": "用户画像",
+    "description": "查看和管理用户画像",
+    "filterByUserId": "按用户 ID 过滤",
+    "search": "搜索",
+    "searching": "搜索中...",
+    "filterApplied": "搜索完成",
+    "filterCleared": "搜索完成",
+    "clearFilter": "清除",
+    "noProfilesEnabled": "未开启用户画像",
+    "noProfiles": "未找到用户画像",
+    "columns": {
+      "userId": "用户 ID",
+      "profileContent": "画像内容",
+      "topics": "主题",
+      "updatedAt": "更新时间",
+      "actions": "操作"
+    },
+    "viewDetails": "查看详情",
+    "loading": "加载画像中...",
+    "showing": "显示 {{total}} 条中的 {{count}} 条画像",
+    "page": "第 {{page}} 页，共 {{total}} 页",
+    "prev": "上一页",
+    "next": "下一页",
+    "detail": {
+      "title": "画像详情",
+      "userId": "用户 ID",
+      "content": "内容",
+      "topics": "主题",
+      "createdAt": "创建时间",
+      "updatedAt": "更新时间",
+      "none": "无"
     }
   }
 }
