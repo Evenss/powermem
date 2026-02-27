@@ -71,6 +71,8 @@ function MemoriesPage() {
   const [searchInput, setSearchInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedMemory, setSelectedMemory] = useState<Memory | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isFiltering, setIsFiltering] = useState(false);
   const queryClient = useQueryClient();
 
   const { data, isLoading, error, refetch } = useQuery({
@@ -108,18 +110,48 @@ function MemoriesPage() {
       )
     : memories;
 
-  const handleFilter = () => {
-    setSearchTerm(searchInput);
-    if (page !== 1) {
-      navigate({
-        search: (prev: any) => ({ ...prev, page: 1 }),
+  const handleFilter = async () => {
+    setIsFiltering(true);
+    try {
+      setSearchTerm(searchInput);
+      if (page !== 1) {
+        await navigate({
+          search: (prev: any) => ({ ...prev, page: 1 }),
+        });
+      }
+      // Give a brief moment for the UI to update
+      await new Promise(resolve => setTimeout(resolve, 300));
+      if (searchInput.trim()) {
+        toast.success(t("memories.toast.filterApplied"));
+      } else {
+        toast.success(t("memories.toast.filterCleared"));
+      }
+    } catch (error) {
+      toast.error(t("common.error"), {
+        description: t("common.tryAgain"),
       });
+    } finally {
+      setIsFiltering(false);
     }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
       handleFilter();
+    }
+  };
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refetch();
+      toast.success(t("memories.toast.refreshed"));
+    } catch (error) {
+      toast.error(t("common.error"), {
+        description: t("common.tryAgain"),
+      });
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
@@ -158,11 +190,11 @@ function MemoriesPage() {
               <User size={12} /> {user_id}
             </Badge>
           )}
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
+          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={isRefreshing}>
             <RefreshCcw
-              className={`size-4 mr-2 ${isLoading ? "animate-spin" : ""}`}
+              className={`size-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`}
             />
-            {t("memories.refresh")}
+            {isRefreshing ? t("dashboard.refreshing") : t("memories.refresh")}
           </Button>
         </div>
       </div>
@@ -186,9 +218,10 @@ function MemoriesPage() {
                 size="sm" 
                 className="h-9 gap-2"
                 onClick={handleFilter}
+                disabled={isFiltering}
               >
-                <Filter className="size-4" />
-                {t("memories.filters")}
+                <Filter className={`size-4 ${isFiltering ? "animate-pulse" : ""}`} />
+                {isFiltering ? t("memories.filtering") : t("memories.filters")}
               </Button>
             </div>
           </div>

@@ -93,6 +93,7 @@
     "refresh": "Refresh",
     "filterPlaceholder": "Filter by content or category...",
     "filters": "Filters",
+    "filtering": "Filtering...",
     "columns": {
       "category": "Category",
       "content": "Content",
@@ -126,7 +127,10 @@
     },
     "toast": {
       "deleted": "Memory deleted successfully",
-      "deleteFailed": "Failed to delete memory: {{error}}"
+      "deleteFailed": "Failed to delete memory: {{error}}",
+      "refreshed": "Memories refreshed successfully",
+      "filterApplied": "Filter applied successfully",
+      "filterCleared": "Filter cleared successfully"
     },
     "error": "Error loading memories"
   },

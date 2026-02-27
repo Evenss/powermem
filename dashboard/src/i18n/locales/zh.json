@@ -93,6 +93,7 @@
     "refresh": "刷新",
     "filterPlaceholder": "按内容或分类筛选...",
     "filters": "筛选器",
+    "filtering": "筛选中...",
     "columns": {
       "category": "分类",
       "content": "内容",
@@ -126,7 +127,10 @@
     },
     "toast": {
       "deleted": "记忆已成功删除",
-      "deleteFailed": "删除记忆失败：{{error}}"
+      "deleteFailed": "删除记忆失败：{{error}}",
+      "refreshed": "记忆已成功刷新",
+      "filterApplied": "筛选已应用",
+      "filterCleared": "筛选已清除"
     },
     "error": "加载记忆失败"
   },
