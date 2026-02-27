@@ -70,6 +70,10 @@ function MemoriesPage() {
   const navigate = useNavigate({ from: Route.fullPath });
   const [searchInput, setSearchInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [userIdInput, setUserIdInput] = useState("");
+  const [userIdFilterTerm, setUserIdFilterTerm] = useState("");
+  const [agentIdInput, setAgentIdInput] = useState("");
+  const [agentIdFilterTerm, setAgentIdFilterTerm] = useState("");
   const [selectedMemory, setSelectedMemory] = useState<Memory | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isFiltering, setIsFiltering] = useState(false);
@@ -102,18 +106,22 @@ function MemoriesPage() {
   const total = data?.total || 0;
   const totalPages = Math.ceil(total / LIMIT);
 
-  const filteredMemories = searchTerm
-    ? memories.filter(
-        (m) =>
-          m.content.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          m.category?.toLowerCase().includes(searchTerm.toLowerCase()),
-      )
-    : memories;
+  const filteredMemories = memories.filter((m) => {
+    const contentMatch = !searchTerm || 
+      m.content.toLowerCase().includes(searchTerm.toLowerCase());
+    const userIdMatch = !userIdFilterTerm || 
+      m.user_id?.toLowerCase().includes(userIdFilterTerm.toLowerCase());
+    const agentIdMatch = !agentIdFilterTerm || 
+      m.agent_id?.toLowerCase().includes(agentIdFilterTerm.toLowerCase());
+    return contentMatch && userIdMatch && agentIdMatch;
+  });
 
   const handleFilter = async () => {
     setIsFiltering(true);
     try {
       setSearchTerm(searchInput);
+      setUserIdFilterTerm(userIdInput);
+      setAgentIdFilterTerm(agentIdInput);
       if (page !== 1) {
         await navigate({
           search: (prev: any) => ({ ...prev, page: 1 }),
@@ -121,7 +129,8 @@ function MemoriesPage() {
       }
       // Give a brief moment for the UI to update
       await new Promise(resolve => setTimeout(resolve, 300));
-      if (searchInput.trim()) {
+      const hasFilters = searchInput.trim() || userIdInput.trim() || agentIdInput.trim();
+      if (hasFilters) {
         toast.success(t("memories.toast.filterApplied"));
       } else {
         toast.success(t("memories.toast.filterCleared"));
@@ -133,6 +142,21 @@ function MemoriesPage() {
     } finally {
       setIsFiltering(false);
     }
+  };
+
+  const handleClearFilters = async () => {
+    setSearchInput("");
+    setUserIdInput("");
+    setAgentIdInput("");
+    setSearchTerm("");
+    setUserIdFilterTerm("");
+    setAgentIdFilterTerm("");
+    if (page !== 1) {
+      await navigate({
+        search: (prev: any) => ({ ...prev, page: 1 }),
+      });
+    }
+    toast.success(t("memories.toast.filterCleared"));
   };
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -201,16 +225,38 @@ function MemoriesPage() {
 
       <Card>
         <CardHeader className="pb-3">
-          <div className="flex flex-col md:flex-row md:items-center gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground size-4" />
-              <Input
-                placeholder={t("memories.filterPlaceholder")}
-                className="pl-9"
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                onKeyPress={handleKeyPress}
-              />
+          <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground size-4" />
+                <Input
+                  placeholder={t("memories.filterByUserId")}
+                  className="pl-9 h-9"
+                  value={userIdInput}
+                  onChange={(e) => setUserIdInput(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                />
+              </div>
+              <div className="relative">
+                <Database className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground size-4" />
+                <Input
+                  placeholder={t("memories.filterByAgentId")}
+                  className="pl-9 h-9"
+                  value={agentIdInput}
+                  onChange={(e) => setAgentIdInput(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                />
+              </div>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground size-4" />
+                <Input
+                  placeholder={t("memories.filterByContent")}
+                  className="pl-9 h-9"
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                />
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <Button 
@@ -221,7 +267,15 @@ function MemoriesPage() {
                 disabled={isFiltering}
               >
                 <Filter className={`size-4 ${isFiltering ? "animate-pulse" : ""}`} />
-                {isFiltering ? t("memories.filtering") : t("memories.filters")}
+                {isFiltering ? t("memories.filtering") : t("memories.applyFilters")}
+              </Button>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-9 gap-2"
+                onClick={handleClearFilters}
+              >
+                {t("memories.clearAllFilters")}
               </Button>
             </div>
           </div>
@@ -231,7 +285,8 @@ function MemoriesPage() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50">
-                  <TableHead className="w-[100px]">{t("memories.columns.category")}</TableHead>
+                  <TableHead className="w-[120px]">{t("memories.columns.userId")}</TableHead>
+                  <TableHead className="w-[120px]">{t("memories.columns.agentId")}</TableHead>
                   <TableHead>{t("memories.columns.content")}</TableHead>
                   <TableHead className="hidden md:table-cell">
                     {t("memories.columns.metadata")}
@@ -246,7 +301,7 @@ function MemoriesPage() {
                 {isLoading ? (
                   Array.from({ length: 5 }).map((_, i) => (
                     <TableRow key={i}>
-                      <TableCell colSpan={5} className="h-16 text-center">
+                      <TableCell colSpan={6} className="h-16 text-center">
                         <div className="flex items-center justify-center gap-2 text-muted-foreground">
                           <RefreshCcw className="size-4 animate-spin" />
                           {t("memories.loading")}
@@ -261,29 +316,16 @@ function MemoriesPage() {
                       className="group cursor-pointer hover:bg-accent/30 transition-colors"
                       onClick={() => setSelectedMemory(memory)}
                     >
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        <Badge
-                          variant="secondary"
-                          className="font-mono text-[10px] capitalize"
-                        >
-                          {memory.category || "General"}
-                        </Badge>
+                      <TableCell className="text-xs font-mono text-muted-foreground">
+                        {memory.user_id || "-"}
+                      </TableCell>
+                      <TableCell className="text-xs font-mono text-muted-foreground">
+                        {memory.agent_id || "-"}
                       </TableCell>
                       <TableCell className="max-w-[300px] lg:max-w-[500px]">
-                        <div className="flex flex-col gap-1">
-                          <p className="text-sm line-clamp-2 leading-snug">
-                            {memory.content}
-                          </p>
-                          {(memory.user_id || memory.agent_id) && (
-                            <div className="flex gap-2 mt-1">
-                              {memory.user_id && (
-                                <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
-                                  <User size={10} /> {memory.user_id}
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </div>
+                        <p className="text-sm line-clamp-2 leading-snug">
+                          {memory.content}
+                        </p>
                       </TableCell>
                       <TableCell className="hidden md:table-cell">
                         <div className="flex flex-wrap gap-1">
@@ -359,7 +401,7 @@ function MemoriesPage() {
                 ) : (
                   <TableRow>
                     <TableCell
-                      colSpan={5}
+                      colSpan={6}
                       className="h-32 text-center text-muted-foreground italic"
                     >
                       {t("memories.noMemories")}
@@ -418,7 +460,7 @@ function MemoriesPage() {
         <SheetContent className="sm:max-w-xl overflow-y-auto">
           <SheetHeader>
             <SheetTitle>{t("memories.detail.title")}</SheetTitle>
-            <SheetDescription>{t("memories.detail.id")}: {selectedMemory?.id}</SheetDescription>
+            <SheetDescription>{t("memories.detail.id")}: {selectedMemory?.memory_id || selectedMemory?.id}</SheetDescription>
           </SheetHeader>
           {selectedMemory && (
             <div className="mt-6 space-y-6">

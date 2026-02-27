@@ -26,6 +26,7 @@ export interface MemoryStats {
 
 export interface Memory {
   id: string | number;
+  memory_id?: string | number;
   content: string;
   user_id?: string;
   agent_id?: string;
