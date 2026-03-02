@@ -109,17 +109,13 @@ export function SystemHealthCard({ status }: SystemHealthCardProps) {
       <CardContent>
         <div className="space-y-4">
           {/* System Status Overview */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1">
               <p className="text-sm text-muted-foreground">{t("dashboard.systemHealth.status")}</p>
               <Badge className={systemStatus.className}>
                 <StatusIcon className="size-3 mr-1" />
                 {systemStatus.text}
               </Badge>
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">{t("dashboard.systemHealth.version")}</p>
-              <p className="text-sm font-medium">{status.version}</p>
             </div>
             <div className="space-y-1">
               <p className="text-sm text-muted-foreground">{t("dashboard.systemHealth.uptime")}</p>
