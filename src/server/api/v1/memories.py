@@ -19,7 +19,6 @@ from ...models.request import (
 )
 from ...models.response import (
     APIResponse,
-    MemoryResponse,
     MemoryListResponse,
 )
 from ...services.memory_service import MemoryService
@@ -313,7 +312,7 @@ async def get_unique_users(
 @limiter.limit(get_rate_limit_string())
 async def get_memory(
     request: Request,
-    memory_id: int,
+    memory_id: str,
     user_id: Optional[str] = Query(None, description="User ID for access control"),
     agent_id: Optional[str] = Query(None, description="Agent ID for access control"),
     api_key: str = Depends(verify_api_key),
@@ -321,7 +320,7 @@ async def get_memory(
 ):
     """Get a memory by ID"""
     memory = service.get_memory(
-        memory_id=memory_id,
+        memory_id=int(memory_id),
         user_id=user_id,
         agent_id=agent_id,
     )
@@ -409,7 +408,7 @@ async def batch_update_memories(
 @limiter.limit(get_rate_limit_string())
 async def update_memory(
     request: Request,
-    memory_id: int,
+    memory_id: str,
     body: MemoryUpdateRequest,
     user_id: Optional[str] = Query(None, description="User ID for access control"),
     agent_id: Optional[str] = Query(None, description="Agent ID for access control"),
@@ -427,7 +426,7 @@ async def update_memory(
         )
     
     result = service.update_memory(
-        memory_id=memory_id,
+        memory_id=int(memory_id),
         content=body.content,
         user_id=user_id,
         agent_id=agent_id,
@@ -479,7 +478,7 @@ async def bulk_delete_memories(
 @limiter.limit(get_rate_limit_string())
 async def delete_memory(
     request: Request,
-    memory_id: int,
+    memory_id: str,
     user_id: Optional[str] = Query(None, description="User ID for access control"),
     agent_id: Optional[str] = Query(None, description="Agent ID for access control"),
     api_key: str = Depends(verify_api_key),
@@ -487,7 +486,7 @@ async def delete_memory(
 ):
     """Delete a memory"""
     service.delete_memory(
-        memory_id=memory_id,
+        memory_id=int(memory_id),
         user_id=user_id,
         agent_id=agent_id,
     )

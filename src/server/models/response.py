@@ -4,7 +4,7 @@ Response models for PowerMem API
 
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, Field, field_serializer, computed_field
 
 try:
     from powermem.utils.utils import get_current_datetime
@@ -48,6 +48,18 @@ class MemoryResponse(BaseModel):
     created_at: Optional[datetime] = Field(None, description="Creation timestamp")
     updated_at: Optional[datetime] = Field(None, description="Update timestamp")
     
+    @computed_field
+    @property
+    def id(self) -> str:
+        """Computed field: alias for memory_id serialized as string to prevent
+        JavaScript large integer precision loss (Snowflake IDs exceed 2^53)."""
+        return str(self.memory_id)
+    
+    @field_serializer('memory_id')
+    def serialize_memory_id(self, value: int, _info) -> str:
+        """Serialize as string to prevent JavaScript precision loss for large Snowflake IDs."""
+        return str(value)
+    
     @field_serializer('created_at', 'updated_at')
     def serialize_datetime(self, value: Optional[datetime], _info):
         """Serialize datetime to ISO format string with Z suffix (UTC)"""
@@ -78,6 +90,11 @@ class SearchResult(BaseModel):
     content: str = Field(..., description="Memory content")
     score: Optional[float] = Field(None, description="Relevance score")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata")
+
+    @field_serializer('memory_id')
+    def serialize_memory_id(self, value: int, _info) -> str:
+        """Serialize as string to prevent JavaScript precision loss for large Snowflake IDs."""
+        return str(value)
 
 
 class SearchResponse(BaseModel):

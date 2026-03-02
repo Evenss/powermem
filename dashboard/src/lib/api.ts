@@ -25,8 +25,8 @@ export interface MemoryStats {
 }
 
 export interface Memory {
-  id: string | number;
-  memory_id?: string | number;
+  id: string;
+  memory_id?: string;
   content: string;
   user_id?: string;
   agent_id?: string;
@@ -137,10 +137,10 @@ export const api = {
     order?: string;
   }) => fetchWithAuth<MemoryList>("/memories", { params }),
 
-  deleteMemory: (memoryId: string | number) =>
+  deleteMemory: (memoryId: string) =>
     fetchWithAuth<void>(`/memories/${memoryId}`, { method: "DELETE" }),
 
-  bulkDeleteMemories: (memoryIds: (string | number)[], userId?: string) =>
+  bulkDeleteMemories: (memoryIds: string[], userId?: string) =>
     fetchWithAuth<{ deleted_count: number }>("/memories/batch", {
       method: "DELETE",
       body: { memory_ids: memoryIds, user_id: userId },

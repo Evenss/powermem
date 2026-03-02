@@ -1338,8 +1338,13 @@ class Memory(MemoryBase):
                     updates, delete_flag = self._intelligence_plugin.on_get(result)
                     try:
                         if delete_flag:
-                            self.storage.delete_memory(memory_id, user_id, agent_id)
-                            return None
+                            logger.info(f"Memory {memory_id} marked as 'should_forget' by intelligence plugin")
+                            
+                            if updates is None:
+                                updates = {}
+                            updates["should_forget"] = True
+                            updates["marked_for_forgetting_at"] = get_current_datetime().isoformat()
+                        
                         if updates:
                             self.storage.update_memory(memory_id, {**updates}, user_id, agent_id)
                     except Exception:
