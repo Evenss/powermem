@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { api } from "../lib/api";
 import type { UserProfile } from "../lib/api";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   Table,
