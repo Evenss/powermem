@@ -286,9 +286,10 @@ class StorageAdapter:
         result = self.vector_store.get(memory_id)
         
         if result and result.payload:
+            content = result.payload.get("data") or result.payload.get("content") or ""
             memory = {
                 "id": result.id,
-                "content": result.payload.get("content") or result.payload.get("data", ""),
+                "content": content,
                 "user_id": result.payload.get("user_id"),
                 "agent_id": result.payload.get("agent_id"),
                 "run_id": result.payload.get("run_id"),
@@ -296,13 +297,13 @@ class StorageAdapter:
                 "created_at": result.payload.get("created_at"),
                 "updated_at": result.payload.get("updated_at"),
             }
-
+            
             # Check access control
             if user_id and memory.get("user_id") != user_id:
                 return None
             if agent_id and memory.get("agent_id") != agent_id:
                 return None
-
+            
             return memory
         
         # If not found in main store and sub stores exist, search sub stores
@@ -311,9 +312,10 @@ class StorageAdapter:
                 try:
                     result = sub_config.vector_store.get(memory_id)
                     if result and result.payload:
+                        content = result.payload.get("data") or result.payload.get("content") or ""
                         memory = {
                             "id": result.id,
-                            "content": result.payload.get("content") or result.payload.get("data", ""),
+                             "content": content,
                             "user_id": result.payload.get("user_id"),
                             "agent_id": result.payload.get("agent_id"),
                             "run_id": result.payload.get("run_id"),
@@ -549,29 +551,6 @@ class StorageAdapter:
             memories.append(memory)
         
         return memories
-    
-    def count_all_memories(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        run_id: Optional[str] = None,
-    ) -> int:
-        """Count all memories with optional filtering."""
-        # Build filters for database-level filtering
-        filters = {}
-        if user_id:
-            filters["user_id"] = user_id
-        if agent_id:
-            filters["agent_id"] = agent_id
-        if run_id:
-            filters["run_id"] = run_id
-        
-        # Use vector store's count method
-        count = self.vector_store.count(
-            filters=filters if filters else None
-        )
-        
-        return count
     
     def clear_memories(
         self,
