@@ -1,9 +1,12 @@
 from typing import Any, ClassVar, Dict, Optional
+import logging
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from powermem.settings import settings_config
 
 from powermem.storage.config.base import BaseVectorStoreConfig, BaseGraphStoreConfig
+
+logger = logging.getLogger(__name__)
 
 
 class OceanBaseConfig(BaseVectorStoreConfig):
@@ -28,57 +31,69 @@ class OceanBaseConfig(BaseVectorStoreConfig):
         description="Default name for the collection"
     )
 
-    # Connection parameters
-    host: str = Field(
-        default="127.0.0.1",
+    # Connection parameters for remote mode
+    host: Optional[str] = Field(
+        default=None,
         validation_alias=AliasChoices(
             "host",
             "OCEANBASE_HOST",
         ),
-        description="OceanBase server host"
+        description="OceanBase server host (for remote mode)"
     )
     
-    port: str = Field(
-        default="2881",
+    port: Optional[str] = Field(
+        default=None,
         validation_alias=AliasChoices(
             "port",
             "OCEANBASE_PORT",
         ),
-        description="OceanBase server port"
+        description="OceanBase server port (for remote mode)"
     )
 
     @field_validator("port", mode="before")
     @classmethod
     def _coerce_port_to_str(cls, value: Any) -> Any:
+        if value is None:
+            return None
         if isinstance(value, int):
             return str(value)
         return value
 
-    user: str = Field(
-        default="root@test",
+    user: Optional[str] = Field(
+        default=None,
         validation_alias=AliasChoices(
             "OCEANBASE_USER",
             "user", # avoid using system USER environment variable first
         ),
-        description="OceanBase username"
+        description="OceanBase username (for remote mode)"
     )
     
-    password: str = Field(
-        default="",
+    password: Optional[str] = Field(
+        default=None,
         validation_alias=AliasChoices(
             "password",
             "OCEANBASE_PASSWORD",
         ),
-        description="OceanBase password"
+        description="OceanBase password (for remote mode)"
     )
     
-    db_name: str = Field(
-        default="test",
+    db_name: Optional[str] = Field(
+        default=None,
         validation_alias=AliasChoices(
             "db_name",
             "OCEANBASE_DATABASE",
         ),
         description="OceanBase database name"
+    )
+
+    # Connection parameter for embedded mode
+    path: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "OCEANBASE_EMBEDDED_PATH",  # Specific env var first to avoid PATH conflict
+            "path",
+        ),
+        description="Path for embedded seekdb mode (auto-creates if not exists)"
     )
 
     connection_args: Optional[dict] = Field(
@@ -88,6 +103,35 @@ class OceanBaseConfig(BaseVectorStoreConfig):
         ),
         description="OceanBase connection args"
     )
+
+    @model_validator(mode="after")
+    def _validate_connection_mode(self) -> "OceanBaseConfig":
+        """Validate connection mode and set defaults based on priority: host > path > default embedded."""
+        if self.host:
+            # Remote mode: host provided (highest priority)
+            logger.info(f"Using remote mode: {self.host}:{self.port or '2881'}")
+            # Ensure required remote parameters have defaults
+            if self.port is None:
+                self.port = "2881"
+            if self.user is None:
+                self.user = "root@test"
+            if self.password is None:
+                self.password = ""
+            if self.db_name is None:
+                self.db_name = "test"
+        elif self.path:
+            # Embedded mode: path provided, no host
+            logger.info(f"Using embedded seekdb mode: path={self.path}")
+            if self.db_name is None:
+                self.db_name = "test"
+        else:
+            # Default embedded mode: neither host nor path provided
+            self.path = "./seekdb_data"
+            if self.db_name is None:
+                self.db_name = "test"
+            logger.info(f"No connection specified, using default embedded mode: path={self.path}")
+        
+        return self
 
     # Vector index parameters
     index_type: str = Field(
@@ -213,11 +257,17 @@ class OceanBaseConfig(BaseVectorStoreConfig):
     )
 
     vector_weight: float = Field(
+        alias=AliasChoices(
+            "OCEANBASE_VECTOR_WEIGHT",
+        ),
         default=0.5,
         description="Weight for vector search"
     )
     
     fts_weight: float = Field(
+        alias=AliasChoices(
+            "OCEANBASE_FTS_WEIGHT",
+        ),
         default=0.5,
         description="Weight for fulltext search"
     )

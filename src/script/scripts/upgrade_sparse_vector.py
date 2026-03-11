@@ -69,30 +69,58 @@ def _validate_and_parse_config(config: Dict[str, Any]) -> Tuple[ObVecClient, str
     user = connection_args.get('user')
     password = connection_args.get('password')
     db_name = connection_args.get('db_name')
+    path = connection_args.get('path')
     collection_name = ob_config.get('collection_name', 'power_mem')
     
-    # 6. Validate required parameters
-    if not all([host, port, user, db_name]):
-        missing = []
-        if not host: missing.append('host')
-        if not port: missing.append('port')
-        if not user: missing.append('user')
-        if not db_name: missing.append('db_name')
+    # 6. Validate connection parameters (support both remote and embedded modes)
+    # Priority: host > path
+    if host:
+        # Remote mode
+        if not all([port, user, db_name]):
+            missing = []
+            if not port: missing.append('port')
+            if not user: missing.append('user')
+            if not db_name: missing.append('db_name')
+            raise ValueError(
+                f"Missing required OceanBase remote connection parameters: {', '.join(missing)}. "
+                f"Please ensure config contains 'vector_store.config.connection_args.{{port, user, db_name}}'."
+            )
+    elif path:
+        # Embedded mode
+        if not db_name:
+            db_name = 'test'  # Use default db_name for embedded mode
+    else:
         raise ValueError(
-            f"Missing required OceanBase connection parameters: {', '.join(missing)}. "
-            f"Please ensure config contains 'vector_store.config.connection_args.{{host, port, user, db_name}}'."
+            "No connection parameters provided. "
+            "Please provide either 'host' (for remote mode) or 'path' (for embedded mode) "
+            "in 'vector_store.config.connection_args'."
         )
     
     # 7. Create database connection
     try:
-        logger.info(f"Connecting to OceanBase at {host}:{port}...")
-        obvector = ObVecClient(
-            uri=f"{host}:{port}",
-            user=user,
-            password=password or "",
-            db_name=db_name
-        )
-        logger.info(f"Connected successfully to database '{db_name}'")
+        if host:
+            # Remote mode
+            logger.info(f"Connecting to OceanBase remote at {host}:{port}...")
+            obvector = ObVecClient(
+                uri=f"{host}:{port}",
+                user=user,
+                password=password or "",
+                db_name=db_name
+            )
+            logger.info(f"Connected successfully to remote database '{db_name}'")
+        else:
+            # Embedded mode
+            from pathlib import Path
+            data_dir = Path(path).expanduser().resolve()
+            data_dir.mkdir(parents=True, exist_ok=True)
+            
+            logger.info(f"Connecting to seekdb in embedded mode: path={data_dir}, db_name={db_name}")
+            obvector = ObVecClient(
+                path=str(data_dir),
+                db_name=db_name
+            )
+            logger.info(f"Connected successfully to embedded database '{db_name}'")
+        
         return obvector, collection_name
     except Exception as e:
         raise RuntimeError(f"Failed to connect to OceanBase: {e}") from e

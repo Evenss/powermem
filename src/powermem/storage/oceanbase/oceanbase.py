@@ -65,6 +65,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             user: Optional[str] = None,
             password: Optional[str] = None,
             db_name: Optional[str] = None,
+            path: Optional[str] = None,  # Embedded mode path
             hybrid_search: bool = True,
             fulltext_parser: str = constants.DEFAULT_FULLTEXT_PARSER,
             vector_weight: float = 0.5,
@@ -92,11 +93,12 @@ class OceanBaseVectorStore(VectorStoreBase):
             normalize (bool): Whether to perform L2 normalization on vectors.
             include_sparse (bool): Whether to include sparse vector support.
             auto_configure_vector_index (bool): Whether to automatically configure vector index settings.
-            host (Optional[str]): OceanBase server host.
-            port (Optional[str]): OceanBase server port.
-            user (Optional[str]): OceanBase username.
-            password (Optional[str]): OceanBase password.
+            host (Optional[str]): OceanBase server host (for remote mode).
+            port (Optional[str]): OceanBase server port (for remote mode).
+            user (Optional[str]): OceanBase username (for remote mode).
+            password (Optional[str]): OceanBase password (for remote mode).
             db_name (Optional[str]): OceanBase database name.
+            path (Optional[str]): Path for embedded seekdb mode.
             hybrid_search (bool): Whether to use hybrid search.
             vector_weight (float): Weight for vector search in hybrid search (default: 0.5).
             fts_weight (float): Weight for full-text search in hybrid search (default: 0.5).
@@ -124,19 +126,39 @@ class OceanBaseVectorStore(VectorStoreBase):
             )
 
         # Handle connection arguments - prioritize individual parameters over connection_args
+        # Priority: host > path > default embedded
         if connection_args is None:
             connection_args = {}
 
-        # Merge individual connection parameters with connection_args
-        final_connection_args = {
-            "host": host or connection_args.get("host", constants.DEFAULT_OCEANBASE_CONNECTION["host"]),
-            "port": port or connection_args.get("port", constants.DEFAULT_OCEANBASE_CONNECTION["port"]),
-            "user": user or connection_args.get("user", constants.DEFAULT_OCEANBASE_CONNECTION["user"]),
-            "password": password or connection_args.get("password", constants.DEFAULT_OCEANBASE_CONNECTION["password"]),
-            "db_name": db_name or connection_args.get("db_name", constants.DEFAULT_OCEANBASE_CONNECTION["db_name"]),
-        }
+        # Extract explicit parameters
+        explicit_host = host or connection_args.get("host")
+        explicit_path = path or connection_args.get("path")
 
-        self.connection_args = final_connection_args
+        if explicit_host:
+            # Remote mode: host is provided (highest priority)
+            self.connection_mode = "remote"
+            self.connection_args = {
+                "host": explicit_host,
+                "port": port or connection_args.get("port", constants.DEFAULT_OCEANBASE_CONNECTION["port"]),
+                "user": user or connection_args.get("user", constants.DEFAULT_OCEANBASE_CONNECTION["user"]),
+                "password": password or connection_args.get("password", constants.DEFAULT_OCEANBASE_CONNECTION["password"]),
+                "db_name": db_name or connection_args.get("db_name", constants.DEFAULT_OCEANBASE_CONNECTION["db_name"]),
+            }
+        elif explicit_path:
+            # Embedded mode: path is provided, no host
+            self.connection_mode = "embedded"
+            self.connection_args = {
+                "path": explicit_path,
+                "db_name": db_name or connection_args.get("db_name", "test")
+            }
+        else:
+            # Default embedded mode: neither host nor path provided
+            self.connection_mode = "embedded"
+            self.connection_args = {
+                "path": "./seekdb_data",
+                "db_name": db_name or connection_args.get("db_name", "test")
+            }
+            logger.info("No connection parameters provided, using default embedded mode: ./seekdb_data")
 
         self.index_type = index_type.upper()
         if self.index_type not in constants.OCEANBASE_SUPPORTED_VECTOR_INDEX_TYPES:
@@ -188,19 +210,37 @@ class OceanBaseVectorStore(VectorStoreBase):
 
     def _create_client(self, **kwargs):
         """Create and initialize the OceanBase vector client."""
-        host = self.connection_args.get("host")
-        port = self.connection_args.get("port")
-        user = self.connection_args.get("user")
-        password = self.connection_args.get("password")
-        db_name = self.connection_args.get("db_name")
+        if self.connection_mode == "embedded":
+            # Embedded mode: use path
+            embedded_path = self.connection_args["path"]
+            db_name = self.connection_args["db_name"]
+            
+            from pathlib import Path
+            data_dir = Path(embedded_path).expanduser().resolve()
+            data_dir.mkdir(parents=True, exist_ok=True)
+            
+            logger.info(f"Connecting to seekdb in embedded mode: path={data_dir}, db_name={db_name}")
+            self.obvector = ObVecClient(
+                path=str(data_dir),
+                db_name=db_name,
+                **kwargs,
+            )
+        else:
+            # Remote mode: use uri with host:port
+            host = self.connection_args.get("host")
+            port = self.connection_args.get("port")
+            user = self.connection_args.get("user")
+            password = self.connection_args.get("password")
+            db_name = self.connection_args.get("db_name")
 
-        self.obvector = ObVecClient(
-            uri=f"{host}:{port}",
-            user=user,
-            password=password,
-            db_name=db_name,
-            **kwargs,
-        )
+            logger.info(f"Connecting to OceanBase remote: {host}:{port}")
+            self.obvector = ObVecClient(
+                uri=f"{host}:{port}",
+                user=user,
+                password=password,
+                db_name=db_name,
+                **kwargs,
+            )
 
     def _configure_vector_index_settings(self):
         """Configure OceanBase vector index settings automatically."""
