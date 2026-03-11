@@ -16,7 +16,7 @@ import json
 import sys
 from typing import Optional, Dict, Any
 
-from ..main import pass_context, CLIContext
+from ..main import pass_context, CLIContext, json_option
 from ..utils.output import (
     format_output,
     print_success,
@@ -52,17 +52,19 @@ def memory_group():
     help="Memory type"
 )
 @click.option("--no-infer", is_flag=True, help="Disable intelligent inference")
+@json_option
 @pass_context
 def add_cmd(ctx: CLIContext, content, user_id, agent_id, run_id, metadata,
-            scope, memory_type, no_infer):
+            scope, memory_type, no_infer, json_output):
     """
     Add a new memory.
     
     \b
     Examples:
-        pmem add "User prefers dark mode" --user-id user123
-        pmem add "API key is stored in vault" --metadata '{"category": "security"}'
+        pmem memory add "User prefers dark mode" --user-id user123
+        pmem memory add "API key is stored in vault" --metadata '{"category": "security"}'
     """
+    ctx.json_output = ctx.json_output or json_output
     try:
         # Parse metadata if provided
         meta_dict = None
@@ -120,17 +122,21 @@ def add_cmd(ctx: CLIContext, content, user_id, agent_id, run_id, metadata,
     "--filters", "-f",
     help="Additional filters as JSON string"
 )
+@json_option
 @pass_context
 def search_cmd(ctx: CLIContext, query, user_id, agent_id, run_id, limit,
-               threshold, filters):
+               threshold, filters, json_output):
     """
-    Search for memories.
+    Search for memories. Use --threshold / -t to only return results with
+    similarity score >= threshold (e.g. 0.3 for score > 0.3).
     
     \b
     Examples:
-        pmem search "user preferences" --user-id user123
-        pmem search "dark mode" --limit 5 --json
+        pmem memory search "user preferences" --user-id user123
+        pmem memory search "dark mode" --limit 5 --json
+        pmem memory search "123" -t 0.3
     """
+    ctx.json_output = ctx.json_output or json_output
     try:
         # Parse filters if provided
         filter_dict = None
@@ -172,8 +178,9 @@ def search_cmd(ctx: CLIContext, query, user_id, agent_id, run_id, limit,
 @click.argument("memory_id", required=True, type=int)
 @click.option("--user-id", "-u", help="User ID for access control")
 @click.option("--agent-id", "-a", help="Agent ID for access control")
+@json_option
 @pass_context
-def get_cmd(ctx: CLIContext, memory_id, user_id, agent_id):
+def get_cmd(ctx: CLIContext, memory_id, user_id, agent_id, json_output):
     """
     Get a specific memory by ID.
     
@@ -182,9 +189,10 @@ def get_cmd(ctx: CLIContext, memory_id, user_id, agent_id):
     
     \b
     Examples:
-        pmem get 123456789
-        pmem get 123456789 --user-id user123
+        pmem memory get 123456789
+        pmem memory get 123456789 --user-id user123
     """
+    ctx.json_output = ctx.json_output or json_output
     try:
         result = ctx.memory.get(
             memory_id=memory_id,
@@ -221,16 +229,18 @@ def get_cmd(ctx: CLIContext, memory_id, user_id, agent_id):
     "--metadata", "-m",
     help="New metadata as JSON string"
 )
+@json_option
 @pass_context
-def update_cmd(ctx: CLIContext, memory_id, content, user_id, agent_id, metadata):
+def update_cmd(ctx: CLIContext, memory_id, content, user_id, agent_id, metadata, json_output):
     """
     Update an existing memory.
     
     \b
     Examples:
-        pmem update 123456789 "Updated content"
-        pmem update 123456789 "New content" --metadata '{"updated": true}'
+        pmem memory update 123456789 "Updated content"
+        pmem memory update 123456789 "New content" --metadata '{"updated": true}'
     """
+    ctx.json_output = ctx.json_output or json_output
     try:
         # Parse metadata if provided
         meta_dict = None
@@ -248,6 +258,11 @@ def update_cmd(ctx: CLIContext, memory_id, content, user_id, agent_id, metadata)
             agent_id=agent_id,
             metadata=meta_dict,
         )
+        
+        # None or invalid result means not found or permission denied (see issue #298)
+        if result is None or not isinstance(result, dict) or not result:
+            print_error(f"Memory not found or access denied: {memory_id}")
+            sys.exit(1)
         
         if ctx.json_output:
             click.echo(format_output(result, "generic", json_output=True))
@@ -276,8 +291,8 @@ def delete_cmd(ctx: CLIContext, memory_id, user_id, agent_id, yes):
     
     \b
     Examples:
-        pmem delete 123456789
-        pmem delete 123456789 --yes
+        pmem memory delete 123456789
+        pmem memory delete 123456789 --yes
     """
     try:
         # Confirm deletion
@@ -295,7 +310,8 @@ def delete_cmd(ctx: CLIContext, memory_id, user_id, agent_id, yes):
         if result:
             print_success(f"Memory deleted: ID={memory_id}")
         else:
-            print_error(f"Failed to delete memory: {memory_id}")
+            # Consistent with update: same prompt for not found or access denied (issue #299)
+            print_error(f"Memory not found or access denied: {memory_id}")
             sys.exit(1)
             
     except Exception as e:
@@ -310,7 +326,7 @@ def delete_cmd(ctx: CLIContext, memory_id, user_id, agent_id, yes):
 @click.option("--user-id", "-u", help="Filter by user ID")
 @click.option("--agent-id", "-a", help="Filter by agent ID")
 @click.option("--run-id", "-r", help="Filter by run/session ID")
-@click.option("--limit", "-l", default=50, type=int, help="Maximum results (default: 50)")
+@click.option("--limit", "-l", default=50, type=int, help="Maximum results (default: 50). Use a negative value (e.g. -1) for no limit.")
 @click.option("--offset", "-o", default=0, type=int, help="Offset for pagination (default: 0)")
 @click.option(
     "--sort-by", "-s",
@@ -328,18 +344,20 @@ def delete_cmd(ctx: CLIContext, memory_id, user_id, agent_id, yes):
     "--filters", "-f",
     help="Additional filters as JSON string"
 )
+@json_option
 @pass_context
 def list_cmd(ctx: CLIContext, user_id, agent_id, run_id, limit, offset,
-             sort_by, order, filters):
+             sort_by, order, filters, json_output):
     """
     List all memories.
     
     \b
     Examples:
-        pmem list --user-id user123
-        pmem list --limit 20 --offset 0
-        pmem list --sort-by created_at --order desc
+        pmem memory list --user-id user123
+        pmem memory list --limit 20 --offset 0
+        pmem memory list --sort-by created_at --order desc
     """
+    ctx.json_output = ctx.json_output or json_output
     try:
         # Parse filters if provided
         filter_dict = None
@@ -349,12 +367,15 @@ def list_cmd(ctx: CLIContext, user_id, agent_id, run_id, limit, offset,
             except json.JSONDecodeError as e:
                 print_error(f"Invalid filters JSON: {e}")
                 sys.exit(1)
-        
+
+        # Negative limit (e.g. -1, -2) means no limit; pass None so backend does not add LIMIT (MySQL/OceanBase reject negative LIMIT)
+        effective_limit = None if limit < 0 else limit
+
         result = ctx.memory.get_all(
             user_id=user_id,
             agent_id=agent_id,
             run_id=run_id,
-            limit=limit,
+            limit=effective_limit,
             offset=offset,
             filters=filter_dict,
             sort_by=sort_by,
@@ -397,8 +418,8 @@ def delete_all_cmd(ctx: CLIContext, user_id, agent_id, run_id, confirm):
     
     \b
     Examples:
-        pmem delete-all --user-id user123 --confirm
-        pmem delete-all --run-id session1 --confirm
+        pmem memory delete-all --user-id user123 --confirm
+        pmem memory delete-all --run-id session1 --confirm
     """
     if not confirm:
         print_error("This will delete ALL matching memories!")
