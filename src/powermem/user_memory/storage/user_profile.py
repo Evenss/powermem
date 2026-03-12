@@ -41,6 +41,7 @@ class OceanBaseUserProfileStore(UserProfileStoreBase):
             user: Optional[str] = None,
             password: Optional[str] = None,
             db_name: Optional[str] = None,
+            path: Optional[str] = None,
             **kwargs,
     ):
         """
@@ -49,11 +50,12 @@ class OceanBaseUserProfileStore(UserProfileStoreBase):
         Args:
             table_name (str): Name of the table to store user profiles.
             connection_args (Optional[Dict[str, Any]]): Connection parameters for OceanBase.
-            host (Optional[str]): OceanBase server host.
-            port (Optional[str]): OceanBase server port.
-            user (Optional[str]): OceanBase username.
-            password (Optional[str]): OceanBase password.
+            host (Optional[str]): OceanBase server host (for remote mode).
+            port (Optional[str]): OceanBase server port (for remote mode).
+            user (Optional[str]): OceanBase username (for remote mode).
+            password (Optional[str]): OceanBase password (for remote mode).
             db_name (Optional[str]): OceanBase database name.
+            path (Optional[str]): Path for embedded seekdb mode.
         """
         self.table_name = table_name
         self.primary_field = "id"
@@ -62,9 +64,15 @@ class OceanBaseUserProfileStore(UserProfileStoreBase):
         if connection_args is None:
             connection_args = {}
 
+        # Determine connection mode: embedded (path) vs remote (host)
+        # Priority: path parameter > host parameter > connection_args
+        self.path = path or connection_args.get("path")
+        self.host = host or connection_args.get("host")
+        
         # Merge individual connection parameters with connection_args
         final_connection_args = {
-            "host": host or connection_args.get("host", constants.DEFAULT_OCEANBASE_CONNECTION["host"]),
+            "path": self.path,
+            "host": self.host or constants.DEFAULT_OCEANBASE_CONNECTION["host"],
             "port": port or connection_args.get("port", constants.DEFAULT_OCEANBASE_CONNECTION["port"]),
             "user": user or connection_args.get("user", constants.DEFAULT_OCEANBASE_CONNECTION["user"]),
             "password": password or connection_args.get("password", constants.DEFAULT_OCEANBASE_CONNECTION["password"]),
@@ -82,19 +90,34 @@ class OceanBaseUserProfileStore(UserProfileStoreBase):
 
     def _create_client(self, **kwargs):
         """Create and initialize the OceanBase client."""
+        path = self.connection_args.get("path")
         host = self.connection_args.get("host")
         port = self.connection_args.get("port")
         user = self.connection_args.get("user")
         password = self.connection_args.get("password")
         db_name = self.connection_args.get("db_name")
 
-        self.obvector = ObVecClient(
-            uri=f"{host}:{port}",
-            user=user,
-            password=password,
-            db_name=db_name,
-            **kwargs,
-        )
+        # Determine connection mode: embedded (path) vs remote (host)
+        if path:
+            # Embedded seekdb mode
+            logger.info(f"Connecting UserProfileStore to seekdb in embedded mode: path={path}")
+            self.obvector = ObVecClient(
+                path=path,
+                db_name=db_name,
+                **kwargs,
+            )
+        elif host:
+            # Remote mode
+            logger.info(f"Connecting UserProfileStore to remote OceanBase: {host}:{port}")
+            self.obvector = ObVecClient(
+                uri=f"{host}:{port}",
+                user=user,
+                password=password,
+                db_name=db_name,
+                **kwargs,
+            )
+        else:
+            raise ValueError("Either 'path' (for embedded mode) or 'host' (for remote mode) must be provided")
 
     def _create_table(self) -> None:
         """Create user profiles table if it doesn't exist."""

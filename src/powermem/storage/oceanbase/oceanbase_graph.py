@@ -123,18 +123,37 @@ class MemoryGraph(GraphStoreBase):
         )
 
         # Initialize OceanBase client
-        host = get_config_value("host", "127.0.0.1")
+        # Support both embedded mode (path) and remote mode (host)
+        path = get_config_value("path", None)
+        host = get_config_value("host", None)
         port = get_config_value("port", "2881")
         user = get_config_value("user", "root")
         password = get_config_value("password", "")
         db_name = get_config_value("db_name", "test")
 
-        self.client = ObVecClient(
-            uri=f"{host}:{port}",
-            user=user,
-            password=password,
-            db_name=db_name,
-        )
+        # Determine connection mode: embedded (path) vs remote (host)
+        if path:
+            # Embedded seekdb mode
+            logger.info(f"Connecting MemoryGraph to seekdb in embedded mode: path={path}")
+            self.client = ObVecClient(
+                path=path,
+                db_name=db_name,
+            )
+        elif host:
+            # Remote mode
+            logger.info(f"Connecting MemoryGraph to remote OceanBase: {host}:{port}")
+            self.client = ObVecClient(
+                uri=f"{host}:{port}",
+                user=user,
+                password=password,
+                db_name=db_name,
+            )
+        else:
+            raise ValueError(
+                "Either 'path' (for embedded mode) or 'host' (for remote mode) must be provided. "
+                "Check your graph_store configuration."
+            )
+        
         self.engine = self.client.engine
         self.metadata = MetaData()
 

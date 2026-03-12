@@ -1,7 +1,11 @@
 from typing import Any, ClassVar, Dict, Optional, Union
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
+import logging
+logger = logging.getLogger(__name__)
 from powermem.settings import settings_config
+
+logger = logging.getLogger(__name__)
 
 
 class BaseVectorStoreConfig(BaseSettings):
@@ -102,55 +106,76 @@ class BaseGraphStoreConfig(BaseVectorStoreConfig):
     _class_paths: ClassVar[dict[str, str]] = {}
     
     # Override connection fields with GRAPH_STORE_ fallback aliases
-    host: str = Field(
-        default="127.0.0.1",
+    host: Optional[str] = Field(
+        default=None,
         validation_alias=AliasChoices(
             "host",
             "GRAPH_STORE_HOST",    # Priority 1
             "OCEANBASE_HOST",      # Priority 2 (fallback)
         ),
-        description="Database server host"
+        description="Database server host (for remote mode)"
     )
     
-    port: str = Field(
-        default="2881",
+    port: Optional[str] = Field(
+        default=None,
         validation_alias=AliasChoices(
             "port",
             "GRAPH_STORE_PORT",
             "OCEANBASE_PORT",
         ),
-        description="Database server port"
+        description="Database server port (for remote mode)"
     )
 
     @field_validator("port", mode="before")
     @classmethod
     def _coerce_port_to_str(cls, value: Any) -> Any:
+        if value is None:
+            return None
         if isinstance(value, int):
             return str(value)
         return value
 
-    user: str = Field(
-        default="root@test",
+    @field_validator("host", "path", mode="before")
+    @classmethod
+    def _convert_empty_string_to_none(cls, value: Any) -> Any:
+        """Convert empty strings to None for host and path fields.
+        
+        Also prevent PATH environment variable from being used as path field.
+        """
+        if value is not None and isinstance(value, str):
+            # Empty string -> None
+            if not value.strip():
+                return None
+            # If path contains ':' (Unix PATH separator) or ';' (Windows PATH separator),
+            # it's likely the PATH environment variable, not a directory path
+            if ":" in value and value.count(":") > 1:
+                return None
+            if ";" in value and value.count(";") > 1:
+                return None
+        return value
+
+    user: Optional[str] = Field(
+        default=None,
         validation_alias=AliasChoices(
             "GRAPH_STORE_USER",
             "OCEANBASE_USER",
             "user", # avoid using system USER environment variable first
         ),
-        description="Database username"
+        description="Database username (for remote mode)"
     )
     
-    password: str = Field(
-        default="",
+    password: Optional[str] = Field(
+        default=None,
         validation_alias=AliasChoices(
             "password",
             "GRAPH_STORE_PASSWORD",
             "OCEANBASE_PASSWORD",
         ),
-        description="Database password"
+        description="Database password (for remote mode)"
     )
     
-    db_name: str = Field(
-        default="test",
+    db_name: Optional[str] = Field(
+        default=None,
         validation_alias=AliasChoices(
             "db_name",
             "GRAPH_STORE_DB_NAME",
@@ -158,6 +183,47 @@ class BaseGraphStoreConfig(BaseVectorStoreConfig):
         ),
         description="Database name"
     )
+    
+    # Connection parameter for embedded mode
+    path: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "path",
+            "GRAPH_STORE_PATH",
+            "OCEANBASE_EMBEDDED_PATH",
+        ),
+        description="Path for embedded seekdb mode (auto-creates if not exists)"
+    )
+
+    @model_validator(mode="after")
+    def _validate_connection_mode(self) -> "BaseGraphStoreConfig":
+        """Validate connection mode and set defaults based on priority: host > path.
+        
+        Note: Unlike OceanBaseConfig, GraphStore does not set default embedded mode
+        automatically. It requires either host or path to be explicitly configured,
+        or it will inherit from the vector store configuration.
+        """
+        if self.host:
+            # Remote mode: host provided (highest priority)
+            logger.info(f"GraphStore using remote mode: {self.host}:{self.port or '2881'}")
+            # Ensure required remote parameters have defaults
+            if self.port is None:
+                self.port = "2881"
+            if self.user is None:
+                self.user = "root@test"
+            if self.password is None:
+                self.password = ""
+            if self.db_name is None:
+                self.db_name = "test"
+        elif self.path:
+            # Embedded mode: path provided, no host
+            logger.info(f"GraphStore using embedded seekdb mode: path={self.path}")
+            if self.db_name is None:
+                self.db_name = "test"
+        # If neither host nor path is set, that's OK - it will be set when config is loaded
+        # or the graph store won't be initialized (if graph_store.enabled=false)
+        
+        return self
     
     # Override vector configuration fields
     vidx_metric_type: str = Field(

@@ -59,6 +59,25 @@ class OceanBaseConfig(BaseVectorStoreConfig):
             return str(value)
         return value
 
+    @field_validator("host", "path", mode="before")
+    @classmethod
+    def _convert_empty_string_to_none(cls, value: Any) -> Any:
+        """Convert empty strings to None for host and path fields.
+        
+        Also prevent PATH environment variable from being used as path field.
+        """
+        if value is not None and isinstance(value, str):
+            # Empty string -> None
+            if not value.strip():
+                return None
+            # If path contains ':' (Unix PATH separator) or ';' (Windows PATH separator),
+            # it's likely the PATH environment variable, not a directory path
+            if ":" in value and value.count(":") > 1:
+                return None
+            if ";" in value and value.count(";") > 1:
+                return None
+        return value
+
     user: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices(
@@ -257,7 +276,8 @@ class OceanBaseConfig(BaseVectorStoreConfig):
     )
 
     vector_weight: float = Field(
-        alias=AliasChoices(
+        validation_alias=AliasChoices(
+            "vector_weight",
             "OCEANBASE_VECTOR_WEIGHT",
         ),
         default=0.5,
@@ -265,7 +285,8 @@ class OceanBaseConfig(BaseVectorStoreConfig):
     )
     
     fts_weight: float = Field(
-        alias=AliasChoices(
+        validation_alias=AliasChoices(
+            "fts_weight",
             "OCEANBASE_FTS_WEIGHT",
         ),
         default=0.5,

@@ -1026,7 +1026,7 @@ class OceanBaseVectorStore(VectorStoreBase):
                 # Build fallback query with default score
                 columns = self._get_standard_select_columns() + [
                     # Default score for LIKE search
-                    '1.0 as score'
+                    literal_column('1.0').label('score')
                 ]
 
                 stmt = select(*columns)
