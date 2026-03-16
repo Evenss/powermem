@@ -119,20 +119,19 @@ pmem shell
 
 完全な CLI リファレンスと例は [CLI 使用ガイド](docs/guides/0012-cli_usage.md) を参照してください。
 
-### 🌐 HTTP API Server
+### 🌐 HTTP API Server と Dashboard
 
-PowerMem は、すべてのコアメモリ管理機能を RESTful API を通じて公開する本番環境対応の HTTP API サーバーも提供します。これにより、HTTP 呼び出しをサポートする任意のアプリケーションが、プログラミング言語に関係なく PowerMem のインテリジェントメモリシステムを統合できます。
+PowerMem は、すべてのコアメモリ管理機能を RESTful API で公開する本番環境対応の HTTP API サーバーを提供します。同時に **Dashboard**（パス `/dashboard/`）の Web 管理画面を提供します。
 
-**SDK との関係**：API サーバーは、内部で同じ PowerMem SDK を使用し、同じ設定（`.env` ファイル）を共有します。Python SDK で利用可能な同じメモリ管理機能への HTTP インターフェースを提供し、PowerMem を非 Python アプリケーションでも利用可能にします。
+**SDK との関係**：API サーバーは内部で同じ PowerMem SDK を使用し、同じ設定（`.env` ファイル）を共有します。Python SDK と同じメモリ管理機能への HTTP インターフェースを提供し、PowerMem を非 Python アプリケーションでも利用可能にします。
 
-**API サーバーの起動**：
+**API サーバーの起動（Dashboard 含む）**：
 
 ```bash
 # 方法 1：CLI コマンドを使用（pip インストール後）
 powermem-server --host 0.0.0.0 --port 8000
 
-# 方法 2：Docker を使用
-# Docker で実行
+# 方法 2：Docker を使用（API サーバー + Dashboard 同一コンテナ）
 docker run -d \
   --name powermem-server \
   -p 8000:8000 \
@@ -142,11 +141,11 @@ docker run -d \
 
 # または Docker Compose を使用（推奨）
 docker-compose -f docker/docker-compose.yml up -d
-
 ```
 
-起動後、API サーバーは以下を提供します：
+起動後、同一サーバーで以下を提供します：
 - すべてのメモリ操作の RESTful API エンドポイント
+- **Dashboard**：`http://localhost:8000/dashboard/` でアクセス
 - インタラクティブな API ドキュメント、`http://localhost:8000/docs` でアクセス可能
 - API Key 認証とレート制限サポート
 - SDK と同じ設定（`.env` ファイル経由）
@@ -209,7 +208,7 @@ Claude Desktop 設定ファイルに次の設定を追加します：
 MCP サーバーは、メモリの追加、検索、更新、削除を含むメモリ管理ツールを提供します。完全な MCP ドキュメントと使用例については、[MCP サーバードキュメント](docs/api/0004-mcp.md) を参照してください。
 
 ## 🔗 統合とデモ
-- 🔗 **Moltbot メモリプラグイン**: [Moltbot](https://github.com/moltbot/moltbot) で HTTP API により PowerMem を長期メモリとして利用。インテリジェント抽出、エビングハウス忘却曲線、マルチエージェント分離に対応。[プラグインを参照](https://github.com/ob-labs/moltbot-extension-powermem)
+- 🔗 **openclaw メモリプラグイン**: [openclaw](https://github.com/openclaw/openclaw) で HTTP API により PowerMem を長期メモリとして利用。インテリジェント抽出、エビングハウス忘却曲線、マルチエージェント分離に対応。[プラグインを参照](https://github.com/ob-labs/openclaw-extension-powermem)
 - 🔗 **LangChain 統合**: LangChain + PowerMem + OceanBase を使用して医療サポートロボットを構築、[例を参照](examples/langchain/README.md)
 - 🔗 **LangGraph 統合**: LangGraph + PowerMem + OceanBase を使用してカスタマーサービスロボットを構築、[例を参照](examples/langgraph/README.md)
 
