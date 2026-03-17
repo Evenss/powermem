@@ -100,6 +100,25 @@ class QwenSparseEmbedding(SparseEmbeddingBase):
                 sparse_embedding_list = response.output.get('embeddings', [{}])[0].get('sparse_embedding', [])
                 embedding = {item.get('index', 0): item.get('value', 0.0) for item in sparse_embedding_list if 'index' in item and 'value' in item}
 
+            # --- Token tracking ---
+            if self.token_tracker is not None:
+                try:
+                    from powermem.utils.token_counter import count_tokens_for_text
+                    input_tokens = count_tokens_for_text(text, "qwen", self.config.model)
+                    self.token_tracker.record_embedding_call(
+                        provider="qwen",
+                        model=self.config.model,
+                        input_tokens=input_tokens,
+                        embedding_type="sparse",
+                        dimensions=len(embedding),
+                        memory_action=memory_action,
+                    )
+                except Exception as te:
+                    import logging as _logging
+                    _logging.getLogger(__name__).debug(
+                        f"QwenSparseEmbedding token tracking failed (non-fatal): {te}"
+                    )
+
             return embedding
 
         except Exception as e:

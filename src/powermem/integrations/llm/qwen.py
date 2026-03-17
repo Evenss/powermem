@@ -138,6 +138,25 @@ class QwenLLM(LLMBase):
         
         return content
 
+    def _extract_usage(self, response: DashScopeAPIResponse):
+        """Extract token usage from DashScope API response.
+
+        Returns:
+            (input_tokens, output_tokens) tuple.  Both default to 0 if not present.
+        """
+        try:
+            usage = getattr(response, "usage", None)
+            if usage is None:
+                return 0, 0
+            if isinstance(usage, dict):
+                return usage.get("input_tokens", 0), usage.get("output_tokens", 0)
+            return (
+                getattr(usage, "input_tokens", 0),
+                getattr(usage, "output_tokens", 0),
+            )
+        except Exception:
+            return 0, 0
+
     def generate_response(
             self,
             messages: List[Dict[str, str]],
@@ -189,6 +208,24 @@ class QwenLLM(LLMBase):
         try:
             response = Generation.call(api_key=self.api_key, **generation_params)
             parsed_response = self._parse_response(response, tools)
+
+            # --- Token tracking ---
+            if self.token_tracker is not None:
+                try:
+                    input_tokens, output_tokens = self._extract_usage(response)
+                    if input_tokens == 0 and output_tokens == 0:
+                        from powermem.utils.token_counter import count_tokens_for_messages
+                        input_tokens = count_tokens_for_messages(messages, "qwen", self.config.model)
+                    purpose = kwargs.get("purpose", "llm_call")
+                    self.token_tracker.record_llm_call(
+                        provider="qwen",
+                        model=self.config.model,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        purpose=purpose,
+                    )
+                except Exception as te:
+                    logging.debug(f"QwenLLM token tracking failed (non-fatal): {te}")
 
             response_callback = getattr(self.config, "response_callback", None)
             if response_callback:

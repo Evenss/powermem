@@ -102,6 +102,23 @@ class AuditConfig(BaseModel):
     )
 
 
+class TokenTrackingConfig(BaseModel):
+    """Configuration for token usage tracking."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Whether to enable token usage tracking"
+    )
+    log_file: str = Field(
+        default="./logs/token_usage.jsonl",
+        description="Path to the JSONL file for token usage records"
+    )
+    include_details: bool = Field(
+        default=True,
+        description="Whether to include per-call detail records in the output"
+    )
+
+
 class LoggingConfig(BaseModel):
     """Configuration for application logging."""
 
@@ -265,6 +282,10 @@ class MemoryConfig(BaseModel):
         description="Configuration for query rewrite module",
         default=None,
     )
+    token_tracking: Optional[TokenTrackingConfig] = Field(
+        description="Configuration for token usage tracking",
+        default=None,
+    )
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -282,6 +303,8 @@ class MemoryConfig(BaseModel):
             self.reranker = BaseRerankConfig()
         if self.query_rewrite is None:
             self.query_rewrite = QueryRewriteConfig()
+        if self.token_tracking is None:
+            self.token_tracking = TokenTrackingConfig()
         
         # Sync embedding_model_dims from embedder if not set in vector_store/graph_store
         embedder_dims = getattr(self.embedder, 'embedding_dims', None)

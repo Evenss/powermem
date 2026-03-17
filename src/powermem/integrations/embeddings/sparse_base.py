@@ -1,7 +1,10 @@
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from powermem.integrations.embeddings.config.sparse_base import BaseSparseEmbedderConfig
+
+if TYPE_CHECKING:
+    from powermem.core.token_tracker import TokenTracker
 
 
 class SparseEmbeddingBase(ABC):
@@ -16,6 +19,9 @@ class SparseEmbeddingBase(ABC):
             self.config = BaseSparseEmbedderConfig()
         else:
             self.config = config
+
+        # Token tracker injected externally by Memory/AsyncMemory after initialisation.
+        self.token_tracker: Optional["TokenTracker"] = None
 
     @abstractmethod
     def embed_sparse(self, text: str) -> dict[int, float]:

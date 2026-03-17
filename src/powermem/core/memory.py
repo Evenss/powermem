@@ -27,6 +27,7 @@ from ..integrations.embeddings.sparse_factory import SparseEmbedderFactory
 from ..integrations.rerank.factory import RerankFactory
 from .telemetry import TelemetryManager
 from .audit import AuditLogger
+from .token_tracker import TokenTracker
 from ..intelligence.memory_optimizer import MemoryOptimizer
 from ..intelligence.plugin import IntelligentMemoryPlugin, EbbinghausIntelligencePlugin
 from ..utils.utils import remove_code_blocks, convert_config_object_to_dict, parse_vision_messages, set_timezone
@@ -312,6 +313,15 @@ class Memory(MemoryBase):
             audit_config = self.config
         self.audit = AuditLogger(audit_config)
 
+        # Initialize token tracker and inject into LLM/embedding instances
+        token_tracking_cfg = {}
+        if self.memory_config and hasattr(self.memory_config, 'token_tracking') and self.memory_config.token_tracking:
+            token_tracking_cfg = self.memory_config.token_tracking.model_dump()
+        elif isinstance(self.config, dict):
+            token_tracking_cfg = self.config.get("token_tracking") or {}
+        self.token_tracker = TokenTracker(token_tracking_cfg)
+        self._inject_token_tracker()
+
         # Initialize memory optimizer
         self.optimizer = MemoryOptimizer(self.storage, self.llm)
 
@@ -347,6 +357,20 @@ class Memory(MemoryBase):
 
         logger.info(f"Memory initialized with storage: {self.storage_type}, LLM: {self.llm_provider}, agent: {self.agent_id or 'default'}")
         self.telemetry.capture_event("memory.init", {"storage_type": self.storage_type, "llm_provider": self.llm_provider, "agent_id": self.agent_id})
+
+    def _inject_token_tracker(self) -> None:
+        """Inject the token tracker into all LLM and embedding instances."""
+        tracker = self.token_tracker
+        if tracker is None:
+            return
+        if self.llm is not None and hasattr(self.llm, 'token_tracker'):
+            self.llm.token_tracker = tracker
+        if self.audio_llm is not None and hasattr(self.audio_llm, 'token_tracker'):
+            self.audio_llm.token_tracker = tracker
+        if self.embedding is not None and hasattr(self.embedding, 'token_tracker'):
+            self.embedding.token_tracker = tracker
+        if self.sparse_embedder is not None and hasattr(self.sparse_embedder, 'token_tracker'):
+            self.sparse_embedder.token_tracker = tracker
 
     def _get_provider(self, component: str, default: str) -> str:
         """
@@ -603,6 +627,7 @@ class Memory(MemoryBase):
                     - "added_entities" (List): List of added graph entities
         """
         try:
+            self.token_tracker.start_tracking("add", user_id=user_id)
             # Handle messages parameter
             if messages is None:
                 raise ValueError("messages must be provided (str, dict, or list[dict])")
@@ -643,6 +668,8 @@ class Memory(MemoryBase):
             logger.error(f"Failed to add memory: {e}")
             self.telemetry.capture_event("memory.add.error", {"error": str(e)})
             raise
+        finally:
+            self.token_tracker.finish_tracking()
     
     def _simple_add(
         self,
@@ -1191,6 +1218,7 @@ class Memory(MemoryBase):
                 - "relations" (List, optional): Graph relations if graph store is enabled
         """
         try:
+            self.token_tracker.start_tracking("search", user_id=user_id)
             if not query or not query.strip():
                 return {
                     "results": [],
@@ -1328,6 +1356,8 @@ class Memory(MemoryBase):
             logger.error(f"Failed to search memories: {e}")
             self.telemetry.capture_event("memory.search.error", {"error": str(e)})
             raise
+        finally:
+            self.token_tracker.finish_tracking()
     
     def get(
         self,
@@ -1351,6 +1381,7 @@ class Memory(MemoryBase):
                 Returns None if the memory is not found or access is denied.
         """
         try:
+            self.token_tracker.start_tracking("get", user_id=user_id)
 
             result = self.storage.get_memory(memory_id, user_id, agent_id)
             
@@ -1401,6 +1432,8 @@ class Memory(MemoryBase):
         except Exception as e:
             logger.error(f"Failed to get memory {memory_id}: {e}")
             raise
+        finally:
+            self.token_tracker.finish_tracking()
     
     def update(
         self,
@@ -1428,6 +1461,7 @@ class Memory(MemoryBase):
                 Returns None if the memory is not found or access is denied.
         """
         try:
+            self.token_tracker.start_tracking("update", user_id=user_id)
             # Validate content is not empty
             if not content or not content.strip():
                 raise ValueError(f"Cannot update memory with empty content: '{content}'")
@@ -1496,6 +1530,8 @@ class Memory(MemoryBase):
         except Exception as e:
             logger.error(f"Failed to update memory {memory_id}: {e}")
             raise
+        finally:
+            self.token_tracker.finish_tracking()
     
     def delete(
         self,
@@ -1505,6 +1541,7 @@ class Memory(MemoryBase):
     ) -> bool:
         """Delete a memory."""
         try:
+            self.token_tracker.start_tracking("delete", user_id=user_id)
 
             result = self.storage.delete_memory(memory_id, user_id, agent_id)
             
@@ -1520,6 +1557,8 @@ class Memory(MemoryBase):
         except Exception as e:
             logger.error(f"Failed to delete memory {memory_id}: {e}")
             raise
+        finally:
+            self.token_tracker.finish_tracking()
     
     def delete_all(
         self,

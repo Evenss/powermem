@@ -395,6 +395,17 @@ class QueryRewriteSettings(_BasePowermemSettings):
         return self.model_dump()
 
 
+class TokenTrackingSettings(_BasePowermemSettings):
+    model_config = settings_config("TOKEN_TRACKING_")
+
+    enabled: bool = Field(default=True)
+    log_file: str = Field(default="./logs/token_usage.jsonl")
+    include_details: bool = Field(default=True)
+
+    def to_config(self) -> Dict[str, Any]:
+        return self.model_dump(include={"enabled", "log_file", "include_details"})
+
+
 class SparseEmbedderSettings(_BasePowermemSettings):
     model_config = settings_config("SPARSE_EMBEDDER_")
 
@@ -587,6 +598,7 @@ class PowermemSettings:
         "performance": ("performance", PerformanceSettings),
         "security": ("security", SecuritySettings),
         "memory_decay": ("memory_decay", MemoryDecaySettings),
+        "token_tracking": ("token_tracking", TokenTrackingSettings),
     }
 
     def __init__(self) -> None:

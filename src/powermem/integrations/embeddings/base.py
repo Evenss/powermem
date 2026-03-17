@@ -1,7 +1,10 @@
 from abc import ABC, abstractmethod
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 from powermem.integrations.embeddings.config.base import BaseEmbedderConfig
+
+if TYPE_CHECKING:
+    from powermem.core.token_tracker import TokenTracker
 
 
 class EmbeddingBase(ABC):
@@ -16,6 +19,9 @@ class EmbeddingBase(ABC):
             self.config = BaseEmbedderConfig()
         else:
             self.config = config
+
+        # Token tracker injected externally by Memory/AsyncMemory after initialisation.
+        self.token_tracker: Optional["TokenTracker"] = None
 
     @abstractmethod
     def embed(self, text, memory_action: Optional[Literal["add", "search", "update"]]):

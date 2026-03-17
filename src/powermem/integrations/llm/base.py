@@ -1,7 +1,10 @@
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Union
 
 from powermem.integrations.llm.config.base import BaseLLMConfig
+
+if TYPE_CHECKING:
+    from powermem.core.token_tracker import TokenTracker
 
 
 class LLMBase(ABC):
@@ -23,6 +26,10 @@ class LLMBase(ABC):
             self.config = BaseLLMConfig(**config)
         else:
             self.config = config
+
+        # Token tracker injected externally by Memory/AsyncMemory after initialisation.
+        # Keep as None when not configured so all providers work without tracking.
+        self.token_tracker: Optional["TokenTracker"] = None
 
         # Validate configuration
         self._validate_config()

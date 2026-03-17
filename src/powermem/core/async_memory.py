@@ -23,6 +23,7 @@ from ..integrations.llm.factory import LLMFactory
 from ..integrations.embeddings.factory import EmbedderFactory
 from .telemetry import TelemetryManager
 from .audit import AuditLogger
+from .token_tracker import TokenTracker
 from ..intelligence.plugin import IntelligentMemoryPlugin, EbbinghausIntelligencePlugin
 from ..utils.utils import remove_code_blocks, convert_config_object_to_dict, parse_vision_messages
 from ..prompts.intelligent_memory_prompts import (
@@ -182,6 +183,15 @@ class AsyncMemory(MemoryBase):
             audit_config = self.config
         self.audit = AuditLogger(audit_config)
 
+        # Initialize token tracker and inject into LLM/embedding instances
+        token_tracking_cfg = {}
+        if self.memory_config and hasattr(self.memory_config, 'token_tracking') and self.memory_config.token_tracking:
+            token_tracking_cfg = self.memory_config.token_tracking.model_dump()
+        elif isinstance(self.config, dict):
+            token_tracking_cfg = self.config.get("token_tracking") or {}
+        self.token_tracker = TokenTracker(token_tracking_cfg)
+        self._inject_token_tracker()
+
         # Save custom prompts from config
         if self.memory_config:
             self.custom_fact_extraction_prompt = self.memory_config.custom_fact_extraction_prompt
@@ -219,6 +229,20 @@ class AsyncMemory(MemoryBase):
         """Initialize async components."""
         await self.storage.initialize_async()
     
+    def _inject_token_tracker(self) -> None:
+        """Inject the token tracker into all LLM and embedding instances."""
+        tracker = self.token_tracker
+        if tracker is None:
+            return
+        if self.llm is not None and hasattr(self.llm, 'token_tracker'):
+            self.llm.token_tracker = tracker
+        if self.audio_llm is not None and hasattr(self.audio_llm, 'token_tracker'):
+            self.audio_llm.token_tracker = tracker
+        if self.embedding is not None and hasattr(self.embedding, 'token_tracker'):
+            self.embedding.token_tracker = tracker
+        if self.sparse_embedder is not None and hasattr(self.sparse_embedder, 'token_tracker'):
+            self.sparse_embedder.token_tracker = tracker
+
     def _get_provider(self, component: str, default: str) -> str:
         """
         Helper method to get component provider uniformly.
@@ -439,6 +463,7 @@ class AsyncMemory(MemoryBase):
                     - "added_entities" (List): List of added graph entities
         """
         try:
+            self.token_tracker.start_tracking("add", user_id=user_id)
             # Handle messages parameter
             if messages is None:
                 raise ValueError("messages must be provided (str, dict, or list[dict])")
@@ -479,6 +504,8 @@ class AsyncMemory(MemoryBase):
             logger.error(f"Failed to add memory: {e}")
             self.telemetry.capture_event("memory.add.error", {"error": str(e)})
             raise
+        finally:
+            self.token_tracker.finish_tracking()
     
     async def _simple_add_async(
         self,
@@ -1016,6 +1043,7 @@ class AsyncMemory(MemoryBase):
                 - "relations" (List, optional): Graph relations if graph store is enabled
         """
         try:
+            self.token_tracker.start_tracking("search", user_id=user_id)
             if not query or not query.strip():
                 return {
                     "results": [],
@@ -1122,6 +1150,8 @@ class AsyncMemory(MemoryBase):
             logger.error(f"Failed to search memories: {e}")
             self.telemetry.capture_event("memory.search.error", {"error": str(e)})
             raise
+        finally:
+            self.token_tracker.finish_tracking()
     
     async def get(
         self,
@@ -1145,6 +1175,7 @@ class AsyncMemory(MemoryBase):
                 Returns None if the memory is not found or access is denied.
         """
         try:
+            self.token_tracker.start_tracking("get", user_id=user_id)
             result = await self.storage.get_memory_async(memory_id, user_id, agent_id)
             
             if result:
@@ -1169,6 +1200,8 @@ class AsyncMemory(MemoryBase):
         except Exception as e:
             logger.error(f"Failed to get memory {memory_id}: {e}")
             raise
+        finally:
+            self.token_tracker.finish_tracking()
     
     async def update(
         self,
@@ -1196,6 +1229,7 @@ class AsyncMemory(MemoryBase):
                 Returns None if the memory is not found or access is denied.
         """
         try:
+            self.token_tracker.start_tracking("update", user_id=user_id)
             # Validate content is not empty
             if not content or not content.strip():
                 raise ValueError(f"Cannot update memory with empty content: '{content}'")
@@ -1264,6 +1298,8 @@ class AsyncMemory(MemoryBase):
         except Exception as e:
             logger.error(f"Failed to update memory {memory_id}: {e}")
             raise
+        finally:
+            self.token_tracker.finish_tracking()
     
     async def delete(
         self,
@@ -1273,6 +1309,7 @@ class AsyncMemory(MemoryBase):
     ) -> bool:
         """Delete a memory asynchronously."""
         try:
+            self.token_tracker.start_tracking("delete", user_id=user_id)
             result = await self.storage.delete_memory_async(memory_id, user_id, agent_id)
             
             if result:
@@ -1287,6 +1324,8 @@ class AsyncMemory(MemoryBase):
         except Exception as e:
             logger.error(f"Failed to delete memory {memory_id}: {e}")
             raise
+        finally:
+            self.token_tracker.finish_tracking()
     
     async def get_all(
         self,
