@@ -5,6 +5,16 @@
 </p>
 
 <p align="center">
+
+*PowerMem integrated with [OpenClaw](https://github.com/openclaw-ai/openclaw): intelligent memory for AI agents. **OpenClaw PowerMem Plugin**: [View Plugin](https://github.com/ob-labs/memory-powermem)*
+
+One command to add PowerMem memory to OpenClaw: `openclaw plugins install memory-powermem`.
+
+<img src="docs/images/openclaw_powermem.jpeg" alt="PowerMem with OpenClaw" width="900"/>
+
+</p>
+
+<p align="center">
     <a href="https://pepy.tech/project/powermem">
         <img src="https://img.shields.io/pypi/dm/powermem" alt="PowerMem PyPI - Downloads">
     </a>
@@ -208,7 +218,7 @@ Add the following configuration to your Claude Desktop config file:
 The MCP server provides tools for memory management including adding, searching, updating, and deleting memories. For complete MCP documentation and usage examples, see the [MCP Server Documentation](docs/api/0004-mcp.md).
 
 ## 🔗 Integrations & Demos
-- 🔗 **openclaw Memory Plugin**: Use PowerMem as long-term memory in [openclaw](https://github.com/openclaw/openclaw) via extraction, Ebbinghaus forgetting curve, multi-agent isolation. [View Plugin](https://github.com/ob-labs/openclaw-extension-powermem)
+- 🔗 **openclaw Memory Plugin**: Use PowerMem as long-term memory in [openclaw](https://github.com/openclaw/openclaw) via extraction, Ebbinghaus forgetting curve, multi-agent isolation. [View Plugin](https://github.com/ob-labs/memory-powermem)
 - 🔗 **LangChain Integration**: Build medical support chatbot using LangChain + PowerMem + OceanBase, [View Example](examples/langchain/README.md)
 - 🔗 **LangGraph Integration**: Build customer service chatbot using LangGraph + PowerMem + OceanBase, [View Example](examples/langgraph/README.md)
 
@@ -229,6 +239,7 @@ The MCP server provides tools for memory management including adding, searching,
 
 | Version | Release Date | Function |
 |---------|--------------|---------|
+| 1.0.0 | 2026.03.16   | <ul><li>PowerMem CLI (pmem): memory operations, config management, backup/restore/migrate, interactive shell, and shell completion</li><li>Web Dashboard for memory management and visualization</li></ul> |
 | 0.5.0 | 2026.02.06   | <ul><li>Unified configuration governance across SDK/API Server (pydantic-settings based)</li><li>Added OceanBase native hybrid search support</li><li>Enhanced Memory query handling and added sorting support for memory list operations</li><li>Added user profile support for custom native-language output</li></ul> |
 | 0.4.0 | 2026.01.20   | <ul><li>Sparse vector support for enhanced hybrid retrieval, combining dense vector, full-text, and sparse vector search</li><li>User memory query rewriting - automatically enhances search queries based on user profiles for improved recall</li><li>Schema upgrade and data migration tools for existing tables</li></ul> |
 | 0.3.0 | 2026.01.09   | <ul><li>Production-ready HTTP API Server with RESTful endpoints for all memory operations</li><li>Docker support for easy deployment and containerization</li></ul> |
