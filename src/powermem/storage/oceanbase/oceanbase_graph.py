@@ -139,6 +139,7 @@ class MemoryGraph(GraphStoreBase):
             )
         else:
             ob_path = get_config_value("ob_path", "./seekdb_data")
+            OceanBaseUtil.ensure_embedded_database_exists(ob_path, db_name)
             self.client = ObVecClient(path=ob_path, db_name=db_name)
         self.engine = self.client.engine
         self.metadata = MetaData()

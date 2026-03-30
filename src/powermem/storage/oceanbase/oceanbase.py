@@ -206,6 +206,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             )
         else:
             ob_path = self.connection_args.get("ob_path", "./seekdb_data")
+            OceanBaseUtil.ensure_embedded_database_exists(ob_path, db_name)
             self.obvector = ObVecClient(path=ob_path, db_name=db_name)
 
     def _configure_vector_index_settings(self):
