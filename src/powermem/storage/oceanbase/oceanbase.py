@@ -65,6 +65,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             user: Optional[str] = None,
             password: Optional[str] = None,
             db_name: Optional[str] = None,
+            ob_path: Optional[str] = None,
             hybrid_search: bool = True,
             fulltext_parser: str = constants.DEFAULT_FULLTEXT_PARSER,
             vector_weight: float = 0.5,
@@ -134,6 +135,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             "user": user or connection_args.get("user", constants.DEFAULT_OCEANBASE_CONNECTION["user"]),
             "password": password or connection_args.get("password", constants.DEFAULT_OCEANBASE_CONNECTION["password"]),
             "db_name": db_name or connection_args.get("db_name", constants.DEFAULT_OCEANBASE_CONNECTION["db_name"]),
+            "ob_path": ob_path or connection_args.get("ob_path", constants.DEFAULT_OCEANBASE_CONNECTION["ob_path"]),
         }
 
         self.connection_args = final_connection_args
@@ -189,18 +191,22 @@ class OceanBaseVectorStore(VectorStoreBase):
     def _create_client(self, **kwargs):
         """Create and initialize the OceanBase vector client."""
         host = self.connection_args.get("host")
-        port = self.connection_args.get("port")
-        user = self.connection_args.get("user")
-        password = self.connection_args.get("password")
         db_name = self.connection_args.get("db_name")
 
-        self.obvector = ObVecClient(
-            uri=f"{host}:{port}",
-            user=user,
-            password=password,
-            db_name=db_name,
-            **kwargs,
-        )
+        if host:
+            port = self.connection_args.get("port")
+            user = self.connection_args.get("user")
+            password = self.connection_args.get("password")
+            self.obvector = ObVecClient(
+                uri=f"{host}:{port}",
+                user=user,
+                password=password,
+                db_name=db_name,
+                **kwargs,
+            )
+        else:
+            ob_path = self.connection_args.get("ob_path", "./seekdb_data")
+            self.obvector = ObVecClient(path=ob_path, db_name=db_name)
 
     def _configure_vector_index_settings(self):
         """Configure OceanBase vector index settings automatically."""
@@ -873,7 +879,7 @@ class OceanBaseVectorStore(VectorStoreBase):
 
             # Convert results to OutputData objects
             search_results = []
-            for row in results.fetchall():
+            for row in OceanBaseUtil.safe_fetchall(results):
                 parsed = self._parse_row_to_dict(row, include_vector=False, extract_score=True)
 
                 # Convert distance to similarity score (0-1 range, higher is better)
@@ -968,7 +974,7 @@ class OceanBaseVectorStore(VectorStoreBase):
                     logger.info(f"Executing FTS query with parameters: query={query}")
                     # Execute with parameter dictionary - the standard SQLAlchemy way
                     results = conn.execute(stmt)
-                    rows = results.fetchall()
+                    rows = OceanBaseUtil.safe_fetchall(results)
 
         except Exception as e:
             logger.warning(f"Full-text search failed, falling back to LIKE search: {e}")
@@ -1003,7 +1009,7 @@ class OceanBaseVectorStore(VectorStoreBase):
                         logger.info(f"Executing LIKE fallback query with parameters: like_query={like_query}")
                         # Execute with parameter dictionary - the standard SQLAlchemy way
                         results = conn.execute(stmt)
-                        rows = results.fetchall()
+                        rows = OceanBaseUtil.safe_fetchall(results)
             except Exception as fallback_error:
                 logger.error(f"Both full-text search and LIKE fallback failed: {fallback_error}")
                 return []
@@ -1087,7 +1093,7 @@ class OceanBaseVectorStore(VectorStoreBase):
                     logger.debug(f"Executing sparse vector search query with sparse_vector: {sparse_vector_str}")
                     # Execute the query
                     results = conn.execute(stmt)
-                    rows = results.fetchall()
+                    rows = OceanBaseUtil.safe_fetchall(results)
 
             # Convert results to OutputData objects
             sparse_results = []
@@ -1229,7 +1235,8 @@ class OceanBaseVectorStore(VectorStoreBase):
 
             with self.obvector.engine.connect() as conn:
                 with conn.begin():
-                    res = conn.execute(sql, {"index": self.collection_name, "body_str": body_str}).fetchone()
+                    res_result = conn.execute(sql, {"index": self.collection_name, "body_str": body_str})
+                    res = OceanBaseUtil.safe_fetchone(res_result)
                     result_json_str = res[0] if res else None
 
             # 6. Parse and return results
@@ -1318,44 +1325,64 @@ class OceanBaseVectorStore(VectorStoreBase):
         # Determine which searches to perform
         perform_sparse = self.include_sparse and sparse_embedding is not None
 
-        # Perform searches in parallel for better performance
-        search_tasks = []
-        with ThreadPoolExecutor(max_workers=3 if perform_sparse else 2) as executor:
-            # Submit vector search
-            vector_future = executor.submit(self._vector_search, query, vectors, candidate_limit, filters)
-            search_tasks.append(('vector', vector_future))
+        is_embedded = not self.connection_args.get("host")
 
-            # Submit full-text search
-            fts_future = executor.submit(self._fulltext_search, query, candidate_limit, filters)
-            search_tasks.append(('fts', fts_future))
+        if is_embedded:
+            # SeekDB embedded engine does not support concurrent SQL across threads
+            try:
+                vector_results = self._vector_search(query, vectors, candidate_limit, filters)
+            except Exception as e:
+                logger.warning(f"vector search failed: {e}")
+                vector_results = []
 
-            # Submit sparse vector search if enabled
+            try:
+                fts_results = self._fulltext_search(query, candidate_limit, filters)
+            except Exception as e:
+                logger.warning(f"fts search failed: {e}")
+                fts_results = []
+
+            sparse_results = []
             if perform_sparse:
-                sparse_future = executor.submit(self._sparse_search, sparse_embedding, candidate_limit, filters)
-                search_tasks.append(('sparse', sparse_future))
-
-            # Wait for all searches to complete and get results
-            vector_results = None
-            fts_results = None
-            sparse_results = None
-
-            for search_type, future in search_tasks:
                 try:
-                    results = future.result()
-                    if search_type == 'vector':
-                        vector_results = results
-                    elif search_type == 'fts':
-                        fts_results = results
-                    elif search_type == 'sparse':
-                        sparse_results = results
+                    sparse_results = self._sparse_search(sparse_embedding, candidate_limit, filters)
                 except Exception as e:
-                    logger.warning(f"{search_type} search failed: {e}")
-                    if search_type == 'vector':
-                        vector_results = []
-                    elif search_type == 'fts':
-                        fts_results = []
-                    elif search_type == 'sparse':
-                        sparse_results = []
+                    logger.warning(f"sparse search failed: {e}")
+                    sparse_results = []
+        else:
+            # Remote mode: parallel searches for better performance
+            search_tasks = []
+            with ThreadPoolExecutor(max_workers=3 if perform_sparse else 2) as executor:
+                vector_future = executor.submit(self._vector_search, query, vectors, candidate_limit, filters)
+                search_tasks.append(('vector', vector_future))
+
+                fts_future = executor.submit(self._fulltext_search, query, candidate_limit, filters)
+                search_tasks.append(('fts', fts_future))
+
+                if perform_sparse:
+                    sparse_future = executor.submit(self._sparse_search, sparse_embedding, candidate_limit, filters)
+                    search_tasks.append(('sparse', sparse_future))
+
+                vector_results = None
+                fts_results = None
+                sparse_results = None
+
+                for search_type, future in search_tasks:
+                    try:
+                        results = future.result()
+                        if search_type == 'vector':
+                            vector_results = results
+                        elif search_type == 'fts':
+                            fts_results = results
+                        elif search_type == 'sparse':
+                            sparse_results = results
+                    except Exception as e:
+                        logger.warning(f"{search_type} search failed: {e}")
+                        if search_type == 'vector':
+                            vector_results = []
+                        elif search_type == 'fts':
+                            fts_results = []
+                        elif search_type == 'sparse':
+                            sparse_results = []
 
         # Ensure we have at least empty lists
         if vector_results is None:
@@ -1645,11 +1672,12 @@ class OceanBaseVectorStore(VectorStoreBase):
         # Convert to final results and sort by RRF score
         heap = []
         for doc_id, doc_data in all_docs.items():
-            # Use document ID as tiebreaker to avoid dict comparison when rrf_scores are equal
+            # Use document ID as tiebreaker; coerce None to 0 for safe comparison
+            safe_id = doc_id if doc_id is not None else 0
             if len(heap) < limit:
-                heapq.heappush(heap, (doc_data['rrf_score'], doc_id, doc_data))
+                heapq.heappush(heap, (doc_data['rrf_score'], safe_id, doc_data))
             elif doc_data['rrf_score'] > heap[0][0]:
-                heapq.heapreplace(heap, (doc_data['rrf_score'], doc_id, doc_data))
+                heapq.heapreplace(heap, (doc_data['rrf_score'], safe_id, doc_data))
 
         final_results = []
         for score, _, doc_data in sorted(heap, key=lambda x: x[0], reverse=True):
@@ -1836,7 +1864,7 @@ class OceanBaseVectorStore(VectorStoreBase):
                 output_column_name=output_columns
             )
 
-            existing_rows = existing_result.fetchall()
+            existing_rows = OceanBaseUtil.safe_fetchall(existing_result)
             if not existing_rows:
                 logger.warning(f"Vector with ID {vector_id} not found in collection '{self.collection_name}'")
                 return
@@ -1900,7 +1928,7 @@ class OceanBaseVectorStore(VectorStoreBase):
                 output_column_name=output_columns,
             )
 
-            rows = results.fetchall()
+            rows = OceanBaseUtil.safe_fetchall(results)
             if not rows:
                 logger.debug(f"Vector with ID {vector_id} not found in collection '{self.collection_name}'")
                 return None
@@ -2030,7 +2058,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             # Execute query
             with self.obvector.engine.connect() as conn:
                 results = conn.execute(stmt)
-                rows = results.fetchall()
+                rows = OceanBaseUtil.safe_fetchall(results)
 
             memories = []
             for row in rows:
@@ -2342,7 +2370,7 @@ class OceanBaseVectorStore(VectorStoreBase):
                 
                 # Try to fetch results (for SELECT queries)
                 try:
-                    rows = result.fetchall()
+                    rows = OceanBaseUtil.safe_fetchall(result)
                     # Convert rows to dictionaries
                     if rows and result.keys():
                         return [dict(zip(result.keys(), row)) for row in rows]

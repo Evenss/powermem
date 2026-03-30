@@ -784,3 +784,17 @@ class OceanBaseUtil:
         except Exception as e:
             logger.error(f"Error parsing native hybrid search results: {e}")
             return []
+
+    @staticmethod
+    def safe_fetchall(result):
+        """Safely fetch all rows, returning empty list when SeekDB embedded returns no-row result for empty tables."""
+        if not getattr(result, 'returns_rows', True):
+            return []
+        return result.fetchall()
+
+    @staticmethod
+    def safe_fetchone(result):
+        """Safely fetch one row, returning None when SeekDB embedded returns no-row result for empty tables."""
+        if not getattr(result, 'returns_rows', True):
+            return None
+        return result.fetchone()
