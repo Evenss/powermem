@@ -390,6 +390,20 @@ class OceanBaseVectorStore(VectorStoreBase):
                 "Please configure embedding_model_dims in your OceanBaseConfig."
             )
 
+        # Embedded SeekDB does not tolerate IVF-family indexes on small datasets:
+        # IVF requires at least nlist training vectors; fewer vectors causes a native
+        # SIGSEGV that cannot be caught by Python.  Switch to HNSW automatically.
+        is_embedded = not self.connection_args.get("host")
+        if is_embedded and self.index_type in constants.INDEX_TYPE_IVF:
+            nlist = (self.vidx_algo_params or {}).get("nlist", constants.DEFAULT_OCEANBASE_IVF_BUILD_PARAM.get("nlist", 128))
+            logger.warning(
+                "Embedded SeekDB: index_type '%s' (nlist=%d) requires at least %d vectors "
+                "and may crash on small datasets. Auto-switching to HNSW.",
+                self.index_type, nlist, nlist,
+            )
+            self.index_type = "HNSW"
+            self.vidx_algo_params = constants.DEFAULT_OCEANBASE_HNSW_BUILD_PARAM.copy()
+
         # Set up vector index parameters
         if self.vidx_metric_type not in ("l2", "inner_product", "cosine"):
             raise ValueError(
@@ -606,12 +620,16 @@ class OceanBaseVectorStore(VectorStoreBase):
         # Create a new Model instance (not bound to Session)
         record = self.model_class()
 
+        # Support both SQLAlchemy Row objects and plain dicts (used when rows
+        # are materialised early to avoid embedded SeekDB cursor crashes).
+        mapping = row._mapping if hasattr(row, '_mapping') else row
+
         # Iterate through all columns in the table, map values from Row to Model instance
         for col_name in self.model_class.__table__.c.keys():
-            # Check if Row contains this column (queries may not include all columns)
-            if col_name in row._mapping.keys():
+            # Check if Row/dict contains this column (queries may not include all columns)
+            if col_name in mapping.keys():
                 attr_name = 'metadata_' if col_name == 'metadata' else col_name
-                setattr(record, attr_name, row._mapping[col_name])
+                setattr(record, attr_name, mapping[col_name])
 
         return record
 
@@ -722,12 +740,13 @@ class OceanBaseVectorStore(VectorStoreBase):
 
         # Extract additional score/distance fields (these fields are not in Model, need to get from original row)
         if extract_score:
-            if 'score' in row._mapping.keys():
-                score_or_distance = row._mapping['score']
-            elif 'distance' in row._mapping.keys():
-                score_or_distance = row._mapping['distance']
-            elif 'anon_1' in row._mapping.keys():
-                score_or_distance = row._mapping['anon_1']
+            mapping = row._mapping if hasattr(row, '_mapping') else row
+            if 'score' in mapping.keys():
+                score_or_distance = mapping['score']
+            elif 'distance' in mapping.keys():
+                score_or_distance = mapping['distance']
+            elif 'anon_1' in mapping.keys():
+                score_or_distance = mapping['anon_1']
 
         # Build standard metadata
         metadata = {
@@ -970,12 +989,14 @@ class OceanBaseVectorStore(VectorStoreBase):
                 stmt = stmt.limit(limit)
 
             # Execute the query with parameters - use direct parameter passing
+            # Materialize rows to dicts inside the connection context to avoid
+            # "pure virtual method called" crash in embedded SeekDB (the C++
+            # cursor is invalidated once the transaction/connection closes).
             with self.obvector.engine.connect() as conn:
                 with conn.begin():
                     logger.info(f"Executing FTS query with parameters: query={query}")
-                    # Execute with parameter dictionary - the standard SQLAlchemy way
                     results = conn.execute(stmt)
-                    rows = OceanBaseUtil.safe_fetchall(results)
+                    rows = [dict(r._mapping) for r in OceanBaseUtil.safe_fetchall(results)]
 
         except Exception as e:
             logger.warning(f"Full-text search failed, falling back to LIKE search: {e}")
@@ -1008,9 +1029,8 @@ class OceanBaseVectorStore(VectorStoreBase):
                 with self.obvector.engine.connect() as conn:
                     with conn.begin():
                         logger.info(f"Executing LIKE fallback query with parameters: like_query={like_query}")
-                        # Execute with parameter dictionary - the standard SQLAlchemy way
                         results = conn.execute(stmt)
-                        rows = OceanBaseUtil.safe_fetchall(results)
+                        rows = [dict(r._mapping) for r in OceanBaseUtil.safe_fetchall(results)]
             except Exception as fallback_error:
                 logger.error(f"Both full-text search and LIKE fallback failed: {fallback_error}")
                 return []
@@ -1089,12 +1109,13 @@ class OceanBaseVectorStore(VectorStoreBase):
                 stmt = stmt.limit(limit)
 
             # Execute the query
+            # Materialize rows to dicts inside the connection context to avoid
+            # "pure virtual method called" crash in embedded SeekDB.
             with self.obvector.engine.connect() as conn:
                 with conn.begin():
                     logger.debug(f"Executing sparse vector search query with sparse_vector: {sparse_vector_str}")
-                    # Execute the query
                     results = conn.execute(stmt)
-                    rows = OceanBaseUtil.safe_fetchall(results)
+                    rows = [dict(r._mapping) for r in OceanBaseUtil.safe_fetchall(results)]
 
             # Convert results to OutputData objects
             sparse_results = []
@@ -1848,6 +1869,22 @@ class OceanBaseVectorStore(VectorStoreBase):
             logger.error(f"Failed to delete vector with ID {vector_id} from collection '{self.collection_name}': {e}", exc_info=True)
             raise
 
+    def _get_records_by_id(self, vector_id, output_columns: List[str]) -> list:
+        """Fetch rows by primary key while keeping the connection open during fetchall.
+
+        pyobvector.get() returns the cursor *after* committing the transaction via
+        ``with conn.begin()``.  In embedded SeekDB the commit invalidates the cursor,
+        so calling fetchall() on it afterwards triggers a C++ ``pure virtual method
+        called`` crash.  This helper avoids that by running fetchall() inside the
+        ``with engine.connect()`` block.
+        """
+        table = Table(self.collection_name, self.obvector.metadata_obj, autoload_with=self.obvector.engine)
+        cols = [table.c[col] for col in output_columns if col in table.c]
+        stmt = select(*cols).where(table.c[self.primary_field].in_([vector_id]))
+        with self.obvector.engine.connect() as conn:
+            result = conn.execute(stmt)
+            return OceanBaseUtil.safe_fetchall(result)
+
     def update(self, vector_id: int, vector: Optional[List[float]] = None, payload: Optional[Dict] = None):
         """Update a vector and its payload."""
         try:
@@ -1859,13 +1896,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             if has_sparse_column:
                 output_columns.append(self.sparse_vector_field)
 
-            existing_result = self.obvector.get(
-                table_name=self.collection_name,
-                ids=[vector_id],
-                output_column_name=output_columns
-            )
-
-            existing_rows = OceanBaseUtil.safe_fetchall(existing_result)
+            existing_rows = self._get_records_by_id(vector_id, output_columns)
             if not existing_rows:
                 logger.warning(f"Vector with ID {vector_id} not found in collection '{self.collection_name}'")
                 return
@@ -1923,13 +1954,7 @@ class OceanBaseVectorStore(VectorStoreBase):
             # Build output column name list
             output_columns = self._get_standard_column_names(include_vector_field=True)
 
-            results = self.obvector.get(
-                table_name=self.collection_name,
-                ids=[vector_id],
-                output_column_name=output_columns,
-            )
-
-            rows = OceanBaseUtil.safe_fetchall(results)
+            rows = self._get_records_by_id(vector_id, output_columns)
             if not rows:
                 logger.debug(f"Vector with ID {vector_id} not found in collection '{self.collection_name}'")
                 return None
