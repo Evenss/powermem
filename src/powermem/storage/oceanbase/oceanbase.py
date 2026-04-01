@@ -1898,12 +1898,10 @@ class OceanBaseVectorStore(VectorStoreBase):
     def update(self, vector_id: int, vector: Optional[List[float]] = None, payload: Optional[Dict] = None):
         """Update a vector and its payload."""
         try:
-            # Get existing record to preserve fields not being updated
-            # Always try to get sparse_vector_field to preserve it even when include_sparse=False
-            # This prevents accidentally clearing sparse_embedding when using a non-sparse Memory instance
-            output_columns = [self.vector_field]
+            # Fetch ALL existing columns so a partial payload never wipes fields
+            output_columns = self._get_standard_column_names(include_vector_field=True)
             has_sparse_column = OceanBaseUtil.check_column_exists(self.obvector, self.collection_name, self.sparse_vector_field)
-            if has_sparse_column:
+            if has_sparse_column and self.sparse_vector_field not in output_columns:
                 output_columns.append(self.sparse_vector_field)
 
             existing_rows = self._get_records_by_id(vector_id, output_columns)
@@ -1911,40 +1909,46 @@ class OceanBaseVectorStore(VectorStoreBase):
                 logger.warning(f"Vector with ID {vector_id} not found in collection '{self.collection_name}'")
                 return
 
-            # Prepare update data
-            update_data: Dict[str, Any] = {
-                self.primary_field: vector_id,
+            # Parse existing row into a dict so we can merge with the new payload
+            existing = self._parse_row_to_dict(existing_rows[0], include_vector=True, extract_score=False)
+
+            # Rebuild the existing payload dict that _build_record_for_insert expects
+            existing_payload: Dict[str, Any] = {
+                "data": existing.get("text_content", ""),
+                "metadata": existing.get("metadata", {}).get("metadata", {}),
+                "user_id": existing.get("user_id", ""),
+                "agent_id": existing.get("agent_id", ""),
+                "run_id": existing.get("run_id", ""),
+                "actor_id": existing.get("actor_id", ""),
+                "hash": existing.get("hash_val", ""),
+                "created_at": existing.get("created_at", ""),
+                "updated_at": existing.get("updated_at", ""),
+                "category": existing.get("category", ""),
             }
+            # Note: sparse_embedding is handled separately below via the column check
 
-            # Extract existing values from row
-            existing_vector = existing_rows[0][0] if existing_rows[0] else None
-            existing_sparse_embedding = existing_rows[0][1] if has_sparse_column and len(existing_rows[0]) > 1 else None
-
-            if vector is not None:
-                update_data[self.vector_field] = (
-                    vector if not self.normalize else OceanBaseUtil.normalize(vector)
-                )
-            else:
-                # Preserve the existing vector to avoid it being cleared by upsert
-                if existing_vector is not None:
-                    update_data[self.vector_field] = existing_vector
-                    logger.debug(f"Preserving existing vector for ID {vector_id}")
-
+            # Merge: new payload keys override existing ones
             if payload is not None:
-                # Use the helper method to build fields, then merge with update_data
-                temp_record = self._build_record_for_insert(vector or [], payload)
+                merged_payload = {**existing_payload, **payload}
+            else:
+                merged_payload = existing_payload
 
-                # Copy relevant fields from temp_record (excluding primary key and vector if not updating)
-                for key, value in temp_record.items():
-                    if key != self.primary_field and (vector is not None or key != self.vector_field):
-                        update_data[key] = value
+            # Build the full record from the merged payload
+            existing_vector = existing.get("vector")
+            update_vector = vector if vector is not None else existing_vector
+            temp_record = self._build_record_for_insert(update_vector if update_vector is not None else [], merged_payload)
+
+            # Prepare update data
+            update_data: Dict[str, Any] = {self.primary_field: vector_id}
+            for key, value in temp_record.items():
+                if key != self.primary_field:
+                    update_data[key] = value
 
             # Preserve existing sparse_embedding if not explicitly provided in payload
-            # This prevents intelligence_plugin updates from accidentally clearing sparse_embedding
-            # Check column existence instead of include_sparse to protect data even when sparse is disabled
             if has_sparse_column and self.sparse_vector_field not in update_data:
-                if existing_sparse_embedding is not None:
-                    update_data[self.sparse_vector_field] = existing_sparse_embedding
+                existing_sparse = existing.get("sparse_embedding")
+                if existing_sparse is not None:
+                    update_data[self.sparse_vector_field] = existing_sparse
                     logger.debug(f"Preserving existing sparse_embedding for ID {vector_id}")
 
             # Update record
