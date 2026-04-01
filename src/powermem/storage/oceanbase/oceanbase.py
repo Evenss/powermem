@@ -624,12 +624,22 @@ class OceanBaseVectorStore(VectorStoreBase):
         # are materialised early to avoid embedded SeekDB cursor crashes).
         mapping = row._mapping if hasattr(row, '_mapping') else row
 
+        # Build a normalized lookup: strip table-name prefix that embedded SeekDB
+        # may add (e.g. "memories.document" → "document") so we can always find
+        # the value regardless of whether the driver returns bare or prefixed keys.
+        normalized: Dict[str, any] = {}
+        for k in mapping.keys():
+            bare = k.split(".")[-1] if "." in str(k) else k
+            # Prefer the bare key; only store prefixed key if bare not yet seen
+            if bare not in normalized:
+                normalized[bare] = mapping[k]
+
         # Iterate through all columns in the table, map values from Row to Model instance
         for col_name in self.model_class.__table__.c.keys():
-            # Check if Row/dict contains this column (queries may not include all columns)
-            if col_name in mapping.keys():
+            value = normalized.get(col_name)
+            if value is not None or col_name in normalized:
                 attr_name = 'metadata_' if col_name == 'metadata' else col_name
-                setattr(record, attr_name, mapping[col_name])
+                setattr(record, attr_name, value)
 
         return record
 
