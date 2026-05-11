@@ -24,7 +24,13 @@ from ..integrations.embeddings.factory import EmbedderFactory
 from .telemetry import TelemetryManager
 from .audit import AuditLogger
 from ..intelligence.plugin import IntelligentMemoryPlugin, EbbinghausIntelligencePlugin
-from ..utils.utils import remove_code_blocks, convert_config_object_to_dict, parse_vision_messages
+from ..utils.utils import (
+    convert_config_object_to_dict,
+    parse_vision_messages,
+    llm_json_text_with_fallback,
+    parse_fact_extraction_json,
+    parse_memory_actions_json,
+)
 from ..prompts.intelligent_memory_prompts import (
     FACT_RETRIEVAL_PROMPT,
     FACT_EXTRACTION_PROMPT,
@@ -312,26 +318,34 @@ class AsyncMemory(MemoryBase):
                 system_prompt = FACT_RETRIEVAL_PROMPT
                 user_prompt = f"Input:\n{conversation}"
             
-            # Call LLM to extract facts asynchronously
             try:
                 response = await asyncio.to_thread(
-                    self.llm.generate_response,
+                    llm_json_text_with_fallback,
+                    self.llm,
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
+                        {"role": "user", "content": user_prompt},
                     ],
-                    response_format={"type": "json_object"}
                 )
             except Exception as e:
                 logger.error(f"Error in fact extraction: {e}")
                 response = ""
             
-            # Parse response
             try:
-                # Remove code blocks if present (LLM sometimes wraps JSON in code blocks)
-                response = remove_code_blocks(response)
-                facts_data = json.loads(response)
-                facts = facts_data.get("facts", [])
+                facts = parse_fact_extraction_json(str(response or ""))
+                if not facts and str(response or "").strip():
+                    logger.debug(
+                        "Fact extraction parsed no facts from non-empty body; retrying without response_format"
+                    )
+                    response_plain = await asyncio.to_thread(
+                        self.llm.generate_response,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        response_format=None,
+                    )
+                    facts = parse_fact_extraction_json(str(response_plain or ""))
                 logger.debug(f"Extracted {len(facts)} facts: {facts}")
                 return facts
             except Exception as e:
@@ -382,22 +396,28 @@ class AsyncMemory(MemoryBase):
                 custom_prompt = self.custom_update_memory_prompt
             update_prompt = get_memory_update_prompt(old_memory, new_facts, custom_prompt)
             
-            # Call LLM asynchronously
             try:
                 response = await asyncio.to_thread(
-                    self.llm.generate_response,
+                    llm_json_text_with_fallback,
+                    self.llm,
                     messages=[{"role": "user", "content": update_prompt}],
-                    response_format={"type": "json_object"}
                 )
             except Exception as e:
                 logger.error(f"Error in new memory actions response: {e}")
                 response = ""
             
-            # Parse response
             try:
-                response = remove_code_blocks(response)
-                actions_data = json.loads(response)
-                actions = actions_data.get("memory", [])
+                actions = parse_memory_actions_json(str(response or ""))
+                if not actions and str(response or "").strip():
+                    logger.debug(
+                        "Memory actions JSON empty after parse; retrying without response_format"
+                    )
+                    response_plain = await asyncio.to_thread(
+                        self.llm.generate_response,
+                        messages=[{"role": "user", "content": update_prompt}],
+                        response_format=None,
+                    )
+                    actions = parse_memory_actions_json(str(response_plain or ""))
                 return actions
             except Exception as e:
                 logger.error(f"Invalid JSON response: {e}")
@@ -519,11 +539,13 @@ class AsyncMemory(MemoryBase):
         # enhanced_metadata = await self.intelligence.process_metadata_async(content, metadata)
         enhanced_metadata = metadata  # Use original metadata without LLM evaluation
 
-        # Intelligent plugin annotations
-        extra_fields = {}
+        # Intelligent plugin annotations: merge into metadata for persistence
         if self._intelligence_plugin and self._intelligence_plugin.enabled:
             extra_fields = self._intelligence_plugin.on_add(content=content, metadata=enhanced_metadata)
-        
+            if extra_fields:
+                if enhanced_metadata is None:
+                    enhanced_metadata = {}
+                enhanced_metadata = {**enhanced_metadata, **extra_fields}
 
         # Generate content hash for deduplication
         content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
@@ -566,9 +588,6 @@ class AsyncMemory(MemoryBase):
             "updated_at": get_current_datetime(),
         }
 
-        if extra_fields:
-            memory_data.update(extra_fields)
-        
         memory_id = await self.storage.add_memory_async(memory_data)
         
         # Log audit event
