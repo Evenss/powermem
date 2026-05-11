@@ -59,6 +59,8 @@
       "contentSnippet": "内容摘要",
       "hits": "命中数",
       "noAccessRecords": "暂无访问记录",
+      "noGrowthTrend": "暂无增长趋势数据",
+      "noMemoryCategories": "暂无记忆分类数据",
       "retentionAge": "留存时长",
       "retentionAgeDesc": "记忆生命周期分布"
     },

@@ -368,30 +368,36 @@ function OverviewPage() {
               <CardDescription>{t("dashboard.charts.growthTrendDesc")}</CardDescription>
             </CardHeader>
             <CardContent>
-              <ChartContainer config={chartConfig} className="h-[300px] w-full">
-                <LineChart
-                  data={trendData}
-                  margin={{ top: 20, left: 12, right: 12 }}
-                >
-                  <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                  <XAxis
-                    dataKey="date"
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    minTickGap={32}
-                  />
-                  <YAxis tickLine={false} axisLine={false} tickMargin={8} />
-                  <ChartTooltip content={<ChartTooltipContent />} />
-                  <Line
-                    type="monotone"
-                    dataKey="count"
-                    stroke="var(--color-count)"
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                </LineChart>
-              </ChartContainer>
+              {trendData.length === 0 ? (
+                <div className="h-[300px] w-full flex items-center justify-center text-muted-foreground text-sm">
+                  {t("dashboard.charts.noGrowthTrend")}
+                </div>
+              ) : (
+                <ChartContainer config={chartConfig} className="h-[300px] w-full">
+                  <LineChart
+                    data={trendData}
+                    margin={{ top: 20, left: 12, right: 12 }}
+                  >
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="date"
+                      tickLine={false}
+                      axisLine={false}
+                      tickMargin={8}
+                      minTickGap={32}
+                    />
+                    <YAxis tickLine={false} axisLine={false} tickMargin={8} />
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                    <Line
+                      type="monotone"
+                      dataKey="count"
+                      stroke="var(--color-count)"
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                  </LineChart>
+                </ChartContainer>
+              )}
             </CardContent>
           </Card>
         </ErrorBoundary>
@@ -407,30 +413,36 @@ function OverviewPage() {
             <CardDescription>{t("dashboard.charts.memoryCategoriesDesc")}</CardDescription>
           </CardHeader>
           <CardContent>
-            <ChartContainer
-              config={dynamicChartConfig}
-              className="h-[300px] w-full"
-            >
-              <PieChart>
-                <Pie
-                  data={typeData}
-                  dataKey="value"
-                  nameKey="name"
-                  innerRadius={60}
-                  outerRadius={80}
-                  strokeWidth={5}
-                >
-                  {typeData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.fill} />
-                  ))}
-                </Pie>
-                <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-                <ChartLegend
-                  content={<ChartLegendContent nameKey="name" />}
-                  className="-translate-y-2 flex-wrap gap-2 [&>*]:basis-1/4 [&>*]:justify-center"
-                />
-              </PieChart>
-            </ChartContainer>
+            {typeData.length === 0 ? (
+              <div className="h-[300px] w-full flex items-center justify-center text-muted-foreground text-sm">
+                {t("dashboard.charts.noMemoryCategories")}
+              </div>
+            ) : (
+              <ChartContainer
+                config={dynamicChartConfig}
+                className="h-[300px] w-full"
+              >
+                <PieChart>
+                  <Pie
+                    data={typeData}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={60}
+                    outerRadius={80}
+                    strokeWidth={5}
+                  >
+                    {typeData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.fill} />
+                    ))}
+                  </Pie>
+                  <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+                  <ChartLegend
+                    content={<ChartLegendContent nameKey="name" />}
+                    className="-translate-y-2 flex-wrap gap-2 [&>*]:basis-1/4 [&>*]:justify-center"
+                  />
+                </PieChart>
+              </ChartContainer>
+            )}
           </CardContent>
         </Card>
         </ErrorBoundary>

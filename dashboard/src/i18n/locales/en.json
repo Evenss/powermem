@@ -59,6 +59,8 @@
       "contentSnippet": "Content Snippet",
       "hits": "Hits",
       "noAccessRecords": "No access records found",
+      "noGrowthTrend": "No growth trend data available",
+      "noMemoryCategories": "No memory category data available",
       "retentionAge": "Retention Age",
       "retentionAgeDesc": "Memory lifecycle distribution"
     },
