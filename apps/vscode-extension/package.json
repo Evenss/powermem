@@ -3,7 +3,13 @@
   "displayName": "PowerMem for VS Code",
   "description": "PowerMem intelligent memory for AI assistants: connect Cursor, Claude Code, Codex, Windsurf to PowerMem with one click.",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "publisher": "OceanBase",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oceanbase/powermem.git",
+    "directory": "apps/vscode-extension"
+  },
   "engines": { "vscode": "^1.104.0" },
   "categories": ["Machine Learning", "Other"],
   "keywords": ["AI", "Memory", "PowerMem", "Cursor", "Claude", "Codex", "MCP"],
@@ -64,7 +70,7 @@
         },
         "powermem.backendUrl": {
           "type": "string",
-          "default": "http://localhost:8000",
+          "default": "http://localhost:8848",
           "description": "PowerMem server address. HTTP mode: used as the API base URL. MCP mode: used as the MCP root (e.g. {backendUrl}/mcp if MCP Server Path is empty)."
         },
         "powermem.apiKey": {
@@ -109,7 +115,7 @@
         },
         "powermem.autoCapture.maxChars": {
           "type": "number",
-          "default": 8000,
+          "default": 8848,
           "description": "Max characters per file to add to memory on auto-capture (avoids huge payloads)."
         },
         "powermem.chat.autoSummarizeEveryNTurns": {

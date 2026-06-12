@@ -31,9 +31,13 @@ on:
 jobs:
   test1:
     runs-on: ubuntu-latest
-    # Only auto-run for internal PRs (same repo) or push/workflow_dispatch/schedule
-    # External PRs (from forks) require manual trigger via workflow_dispatch
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository)
+    # Skip on forks: schedule/push only run in the upstream repo (secrets are unavailable in forks).
+    # External PRs (from forks) require manual trigger via workflow_dispatch.
+    if: |
+      (github.event_name == 'push' && github.repository == 'oceanbase/powermem') ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' && github.repository == 'oceanbase/powermem') ||
+      (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository)
     strategy:
       matrix:
         python-version: ["3.11"]
@@ -43,7 +47,7 @@ jobs:
       - name: Get PR SHA (if PR number provided)
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.pr_number != ''
         id: get_pr_sha
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -57,7 +61,7 @@ jobs:
             core.setOutput('sha', pr.head.sha);
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         # For pull_request_target, checkout the PR branch
         # For workflow_dispatch, checkout the PR SHA (if PR number provided), or specified ref, or default branch
         # For push, checkout the pushed branch
@@ -66,7 +70,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
@@ -77,7 +81,7 @@ jobs:
           pip install --upgrade setuptools wheel
 
       - name: Cache pip dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v5
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
@@ -86,7 +90,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -e ".[dev,test]"
+          pip install -e ".[dev,test,server,seekdb]"
 
       - name: Deploy SeekDB (OceanBase)
         run: |
@@ -128,22 +132,34 @@ jobs:
           echo "SILICONFLOW_CN_API_KEY length: ${#SILICONFLOW_CN_API_KEY}"
           echo "SILICONFLOW_COM_API_KEY length: ${#SILICONFLOW_COM_API_KEY}"
           cp .env.example .env
+          set_env_var() {
+            local key="$1"
+            local value="$2"
+            awk -v prefix="${key}=" 'index($0, prefix) != 1 { print }' .env > .env.tmp
+            mv .env.tmp .env
+            printf '%s=%s\n' "${key}" "${value}" >> .env
+          }
           # Update existing environment variables
-          sed -i 's|^OCEANBASE_HOST=.*|OCEANBASE_HOST=127.0.0.1|' .env
-          sed -i 's|^OCEANBASE_PORT=.*|OCEANBASE_PORT=10001|' .env
-          sed -i 's|^OCEANBASE_USER=.*|OCEANBASE_USER=root|' .env
-          sed -i 's|^OCEANBASE_PASSWORD=.*|OCEANBASE_PASSWORD=|' .env
-          sed -i 's|^OCEANBASE_DATABASE=.*|OCEANBASE_DATABASE=powermem|' .env
-          sed -i 's|^OCEANBASE_COLLECTION=.*|OCEANBASE_COLLECTION=memories|' .env
-          sed -i 's|^DATABASE_PROVIDER=.*|DATABASE_PROVIDER=oceanbase|' .env
-          sed -i 's|^LLM_PROVIDER=.*|LLM_PROVIDER=siliconflow|' .env
-          sed -i 's|^LLM_MODEL=.*|LLM_MODEL=THUDM/GLM-4-9B-0414|' .env
-          sed -i 's|^SILICONFLOW_LLM_BASE_URL=.*|SILICONFLOW_LLM_BASE_URL=https://api.siliconflow.cn/v1|' .env
-          sed -i 's|^GRAPH_STORE_PORT=.*|GRAPH_STORE_PORT=10001|' .env
-          sed -i 's|^GRAPH_STORE_PASSWORD=.*|GRAPH_STORE_PASSWORD=|' .env
-          sed -i "s|^LLM_API_KEY=.*|LLM_API_KEY=${SILICONFLOW_CN_API_KEY}|" .env
-          sed -i "s|^EMBEDDING_API_KEY=.*|EMBEDDING_API_KEY=${QWEN_API_KEY}|" .env
-          sed -i "s|^POWERMEM_SERVER_API_KEYS=.*|POWERMEM_SERVER_API_KEYS=key1,key2,key3|" .env
+          set_env_var OCEANBASE_HOST 127.0.0.1
+          set_env_var OCEANBASE_PORT 10001
+          set_env_var OCEANBASE_USER root
+          set_env_var OCEANBASE_PASSWORD ""
+          set_env_var OCEANBASE_DATABASE powermem
+          set_env_var OCEANBASE_COLLECTION memories_1536
+          set_env_var DATABASE_PROVIDER oceanbase
+          set_env_var LLM_PROVIDER siliconflow
+          set_env_var LLM_MODEL THUDM/GLM-4-9B-0414
+          set_env_var SILICONFLOW_LLM_BASE_URL https://api.siliconflow.cn/v1
+          set_env_var EMBEDDING_PROVIDER qwen
+          set_env_var EMBEDDING_MODEL text-embedding-v4
+          set_env_var EMBEDDING_DIMS 1536
+          set_env_var QWEN_EMBEDDING_BASE_URL https://dashscope.aliyuncs.com/api/v1
+          set_env_var GRAPH_STORE_PORT 10001
+          set_env_var GRAPH_STORE_PASSWORD ""
+          set_env_var OCEANBASE_EMBEDDING_MODEL_DIMS 1536
+          set_env_var LLM_API_KEY "${SILICONFLOW_CN_API_KEY}"
+          set_env_var EMBEDDING_API_KEY "${QWEN_API_KEY}"
+          set_env_var POWERMEM_SERVER_API_KEYS key1,key2,key3
 
       - name: Run regression tests
         id: run_tests
@@ -156,7 +172,7 @@ jobs:
           pytest tests/regression/test_scenario*.py -vs --junitxml=report/test1.xml
       - name: Upload JUnit report
         if: always() && (steps.run_tests.outcome == 'success' || steps.run_tests.outcome == 'failure')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: junit-test1
           path: report/
@@ -169,9 +185,13 @@ jobs:
           echo "✓ 清理完成"
   test2:
     runs-on: ubuntu-latest
-    # Only auto-run for internal PRs (same repo) or push/workflow_dispatch/schedule
-    # External PRs (from forks) require manual trigger via workflow_dispatch
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository)
+    # Skip on forks: schedule/push only run in the upstream repo (secrets are unavailable in forks).
+    # External PRs (from forks) require manual trigger via workflow_dispatch.
+    if: |
+      (github.event_name == 'push' && github.repository == 'oceanbase/powermem') ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' && github.repository == 'oceanbase/powermem') ||
+      (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository)
     strategy:
       matrix:
         python-version: ["3.11"]
@@ -181,7 +201,7 @@ jobs:
       - name: Get PR SHA (if PR number provided)
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.pr_number != ''
         id: get_pr_sha
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -195,7 +215,7 @@ jobs:
             core.setOutput('sha', pr.head.sha);
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         # For pull_request_target, checkout the PR branch
         # For workflow_dispatch, checkout the PR SHA (if PR number provided), or specified ref, or default branch
         # For push, checkout the pushed branch
@@ -204,7 +224,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
@@ -215,7 +235,7 @@ jobs:
           pip install --upgrade setuptools wheel
 
       - name: Cache pip dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v5
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
@@ -224,7 +244,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -e ".[dev,test]"
+          pip install -e ".[dev,test,server,seekdb]"
 
       - name: Deploy SeekDB (OceanBase)
         run: |
@@ -266,22 +286,34 @@ jobs:
           echo "SILICONFLOW_CN_API_KEY length: ${#SILICONFLOW_CN_API_KEY}"
           echo "SILICONFLOW_COM_API_KEY length: ${#SILICONFLOW_COM_API_KEY}"
           cp .env.example .env
+          set_env_var() {
+            local key="$1"
+            local value="$2"
+            awk -v prefix="${key}=" 'index($0, prefix) != 1 { print }' .env > .env.tmp
+            mv .env.tmp .env
+            printf '%s=%s\n' "${key}" "${value}" >> .env
+          }
           # Update existing environment variables
-          sed -i 's|^OCEANBASE_HOST=.*|OCEANBASE_HOST=127.0.0.1|' .env
-          sed -i 's|^OCEANBASE_PORT=.*|OCEANBASE_PORT=10001|' .env
-          sed -i 's|^OCEANBASE_USER=.*|OCEANBASE_USER=root|' .env
-          sed -i 's|^OCEANBASE_PASSWORD=.*|OCEANBASE_PASSWORD=|' .env
-          sed -i 's|^OCEANBASE_DATABASE=.*|OCEANBASE_DATABASE=powermem|' .env
-          sed -i 's|^OCEANBASE_COLLECTION=.*|OCEANBASE_COLLECTION=memories|' .env
-          sed -i 's|^DATABASE_PROVIDER=.*|DATABASE_PROVIDER=oceanbase|' .env
-          sed -i 's|^LLM_PROVIDER=.*|LLM_PROVIDER=siliconflow|' .env
-          sed -i 's|^LLM_MODEL=.*|LLM_MODEL=THUDM/GLM-4-9B-0414|' .env
-          sed -i 's|^SILICONFLOW_LLM_BASE_URL=.*|SILICONFLOW_LLM_BASE_URL=https://api.siliconflow.cn/v1|' .env
-          sed -i 's|^GRAPH_STORE_PORT=.*|GRAPH_STORE_PORT=10001|' .env
-          sed -i 's|^GRAPH_STORE_PASSWORD=.*|GRAPH_STORE_PASSWORD=|' .env
-          sed -i "s|^LLM_API_KEY=.*|LLM_API_KEY=${SILICONFLOW_CN_API_KEY}|" .env
-          sed -i "s|^EMBEDDING_API_KEY=.*|EMBEDDING_API_KEY=${QWEN_API_KEY}|" .env
-          sed -i "s|^POWERMEM_SERVER_API_KEYS=.*|POWERMEM_SERVER_API_KEYS=key1,key2,key3|" .env
+          set_env_var OCEANBASE_HOST 127.0.0.1
+          set_env_var OCEANBASE_PORT 10001
+          set_env_var OCEANBASE_USER root
+          set_env_var OCEANBASE_PASSWORD ""
+          set_env_var OCEANBASE_DATABASE powermem
+          set_env_var OCEANBASE_COLLECTION memories_1536
+          set_env_var DATABASE_PROVIDER oceanbase
+          set_env_var LLM_PROVIDER siliconflow
+          set_env_var LLM_MODEL THUDM/GLM-4-9B-0414
+          set_env_var SILICONFLOW_LLM_BASE_URL https://api.siliconflow.cn/v1
+          set_env_var EMBEDDING_PROVIDER qwen
+          set_env_var EMBEDDING_MODEL text-embedding-v4
+          set_env_var EMBEDDING_DIMS 1536
+          set_env_var QWEN_EMBEDDING_BASE_URL https://dashscope.aliyuncs.com/api/v1
+          set_env_var GRAPH_STORE_PORT 10001
+          set_env_var GRAPH_STORE_PASSWORD ""
+          set_env_var OCEANBASE_EMBEDDING_MODEL_DIMS 1536
+          set_env_var LLM_API_KEY "${SILICONFLOW_CN_API_KEY}"
+          set_env_var EMBEDDING_API_KEY "${QWEN_API_KEY}"
+          set_env_var POWERMEM_SERVER_API_KEYS key1,key2,key3
 
       - name: Run regression tests
         id: run_tests
@@ -294,7 +326,7 @@ jobs:
           pytest tests/regression/ --ignore-glob='*test_scenario*.py' -vs --junitxml=report/test2.xml
       - name: Upload JUnit report
         if: always() && (steps.run_tests.outcome == 'success' || steps.run_tests.outcome == 'failure')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: junit-test2
           path: report/
@@ -312,21 +344,27 @@ jobs:
     if: always() && (needs.test1.result == 'success' || needs.test1.result == 'failure') && (needs.test2.result == 'success' || needs.test2.result == 'failure')
     steps:
       - name: Download JUnit artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: junit-*
       - name: Collect JUnit reports
         run: |
           mkdir -p all-reports
-          # download-artifact 解压后可能是 junit-test1/report/test1.xml 或 junit-test1/test1.xml，用 find 兼容两种结构
-          find junit-test1 junit-test2 -maxdepth 3 -name '*.xml' -exec cp {} all-reports/ \;
+          # download-artifact may only fetch reports from successful test shards.
+          # Search existing junit-* directories instead of assuming every shard
+          # produced an artifact.
+          report_dirs=(junit-*)
+          if [ -d "${report_dirs[0]}" ]; then
+            find "${report_dirs[@]}" -maxdepth 3 -name '*.xml' -exec cp {} all-reports/ \;
+          else
+            echo "No JUnit artifact directories found."
+          fi
           ls -la all-reports/
       - name: Publish Test Report Summary
-        uses: mikepenz/action-junit-report@v4
+        uses: mikepenz/action-junit-report@v6
         if: always()
         with:
           report_paths: 'all-reports/*.xml'
           require_tests: false
           job_name: Regression Tests
           check_name: Test Report
-

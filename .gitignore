@@ -217,6 +217,7 @@ api_server.log
 # Server data directories (if any)
 server_data/
 api_data/
+seekdb_data/
 
 # Server backups
 server_backup/
@@ -227,3 +228,12 @@ apps/vscode-extension/node_modules/
 apps/vscode-extension/out/
 apps/vscode-extension/*.vsix
 
+# Docusaurus documentation site (docs/website)
+# Source docs live under docs/; scripts/deploy-frontend.sh syncs them into docs/website/docs at build time.
+docs/website/docs/
+docs/website/.docusaurus/
+docs/website/node_modules/
+# docs/website/build/ is already covered by build/ above
+
+.codefuse/
+apps/vscode-extension/package-lock.json

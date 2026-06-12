@@ -13,26 +13,42 @@ from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 
 from .config import config
+from .dashboard_assets import DASHBOARD_DIR, dashboard_assets_available
 from .api.v1 import router as v1_router
 from .middleware.logging import setup_logging, LoggingMiddleware
 from .middleware.rate_limit import rate_limit_middleware
 from .middleware.error_handler import error_handler
 from .middleware.auth import verify_api_key
 
-import os
 import logging
+from importlib.util import find_spec
 
 # Setup logging
 setup_logging()
 
 logger = logging.getLogger("server")
 
-# Setup templates
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def _load_mcp_asgi_app():
+    """Return streamable HTTP MCP ASGI app when powermem[mcp] is installed."""
+    if find_spec("fastmcp") is None:
+        logger.warning("MCP extras not installed; /mcp endpoint disabled")
+        return None
+
+    try:
+        from powermem.mcp.server import mcp
+
+        return mcp.http_app(path="/mcp", transport="streamable-http")
+    except ImportError as exc:
+        logger.warning("MCP extras not installed; /mcp endpoint disabled: %s", exc)
+        return None
+
+
+mcp_asgi_app = _load_mcp_asgi_app()
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def _service_lifespan(app: FastAPI):
     """Initialize shared service singletons at startup and clean up on shutdown."""
     from .services.memory_service import MemoryService
     from .services.search_service import SearchService
@@ -56,6 +72,18 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Shutting down services...")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Run MCP session manager (when available) together with API service init."""
+    if mcp_asgi_app is not None:
+        async with mcp_asgi_app.router.lifespan_context(app):
+            async with _service_lifespan(app):
+                yield
+    else:
+        async with _service_lifespan(app):
+            yield
 
 
 # Create FastAPI app
@@ -87,18 +115,25 @@ rate_limit_middleware(app)
 
 
 # Mount Dashboard (redirect /dashboard -> /dashboard/ so index.html is served)
-dashboard_dist = os.path.abspath(os.path.join(BASE_DIR, "dashboard"))
-if os.path.exists(dashboard_dist):
+if dashboard_assets_available():
+
     @app.get("/dashboard", include_in_schema=False)
     async def dashboard_redirect():
         return RedirectResponse(url="/dashboard/", status_code=302)
 
     app.mount(
-        "/dashboard", StaticFiles(directory=dashboard_dist, html=True), name="dashboard"
+        "/dashboard",
+        StaticFiles(directory=str(DASHBOARD_DIR), html=True),
+        name="dashboard",
     )
 
 # Include API routers
 app.include_router(v1_router)
+
+# Streamable HTTP MCP on the same port as the REST API (requires powermem[mcp])
+if mcp_asgi_app is not None:
+    app.mount("", mcp_asgi_app)
+    logger.info("Mounted PowerMem MCP at /mcp")
 
 # Add exception handlers
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -121,6 +156,7 @@ async def root():
         "docs": "/docs",
         "dashboard": "/dashboard/",
         "health": "/api/v1/system/health",
+        "mcp": "/mcp" if mcp_asgi_app is not None else None,
     }
 
 
@@ -140,7 +176,7 @@ async def api_root():
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     uvicorn.run(
         "server.main:app",
         host=config.host,

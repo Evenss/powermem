@@ -10,7 +10,7 @@ import { searchMemories, addMemory } from './api/client';
 import type { SearchResultItem } from './api/types';
 import { registerChatParticipant } from './chat/participant';
 
-let backendUrl = 'http://localhost:8000';
+let backendUrl = 'http://localhost:8848';
 let apiKey: string | undefined;
 let statusBar: vscode.StatusBarItem;
 let useMCP = true;
@@ -19,10 +19,12 @@ let isEnabled = true;
 let userId = '';
 let autoCaptureOnSave = false;
 let autoCaptureInclude = '**/*.md,**/*.txt,**/docs/**';
-let autoCaptureMaxChars = 8000;
+const AUTO_CAPTURE_MAX_CHARS_DEFAULT = 8848;
+let autoCaptureMaxChars = AUTO_CAPTURE_MAX_CHARS_DEFAULT;
 let chatAutoSummarizeTurns = 10;
 let chatAutoRetrieve = true;
 let seamlessMode = true;
+let outputChannel: vscode.OutputChannel;
 
 function getUseMCPFromConfig(config: vscode.WorkspaceConfiguration): boolean {
   const mode = config.get<'http' | 'mcp'>('connectionMode');
@@ -119,7 +121,13 @@ async function showMenu(): Promise<void> {
     { label: '$(add) Add selection to memory', action: 'add' },
     { label: '$(pencil) Quick note', action: 'note' },
     { label: '$(dashboard) Dashboard', action: 'dashboard' },
-    { label: useMCP ? '$(server-process) Switch to HTTP' : '$(link) Switch to MCP', action: 'toggleMcp' },
+    {
+      label: useMCP ? '$(server-process) Switch to HTTP' : '$(link) Switch to MCP',
+      description: useMCP
+        ? 'Removes Cursor MCP entry — Cursor will no longer use PowerMem via MCP'
+        : 'Restore MCP config for Cursor and linked tools',
+      action: 'toggleMcp',
+    },
     { label: '$(gear) Setup', action: 'setup' },
     { label: '$(refresh) Reconnect', action: 'reconnect' },
     { label: '$(circle-slash) Disable', action: 'disable' },
@@ -143,6 +151,16 @@ async function showMenu(): Promise<void> {
       vscode.commands.executeCommand('powermem.dashboard');
       break;
     case 'toggleMcp':
+      if (useMCP) {
+        const confirm = await vscode.window.showWarningMessage(
+          'HTTP mode removes the PowerMem entry from ~/.cursor/mcp.json. Cursor will disconnect from PowerMem MCP (other tools may use HTTP context instead). Continue?',
+          { modal: true },
+          'Switch to HTTP'
+        );
+        if (confirm !== 'Switch to HTTP') {
+          break;
+        }
+      }
       useMCP = !useMCP;
       await vscode.workspace.getConfiguration('powermem').update('connectionMode', useMCP ? 'mcp' : 'http', vscode.ConfigurationTarget.Global);
       await autoLinkAll();
@@ -182,7 +200,7 @@ async function showSetup(): Promise<void> {
   if (!choice) return;
   switch (choice.action) {
     case 'url': {
-      const url = await vscode.window.showInputBox({ prompt: 'PowerMem backend URL', value: backendUrl, placeHolder: 'http://localhost:8000' });
+      const url = await vscode.window.showInputBox({ prompt: 'PowerMem backend URL', value: backendUrl, placeHolder: 'http://localhost:8848' });
       if (url) {
         await config.update('backendUrl', url, vscode.ConfigurationTarget.Global);
         backendUrl = url;
@@ -232,19 +250,34 @@ async function showSetup(): Promise<void> {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  outputChannel = vscode.window.createOutputChannel('PowerMem');
+  context.subscriptions.push(outputChannel);
+  outputChannel.appendLine('[PowerMem] Extension activating…');
+
+  // Platform check: only macOS and Linux are supported
+  const platform = process.platform;
+  if (platform === 'win32') {
+    const msg = 'PowerMem is not supported on Windows. Only macOS and Linux are supported.';
+    outputChannel.appendLine(`[PowerMem] ✗ ${msg}`);
+    vscode.window.showErrorMessage(msg);
+    return;
+  }
+  outputChannel.appendLine(`[PowerMem] Platform: ${platform} ✓`);
+
   const config = vscode.workspace.getConfiguration('powermem');
   isEnabled = config.get<boolean>('enabled') ?? true;
-  backendUrl = config.get<string>('backendUrl') || 'http://localhost:8000';
+  backendUrl = config.get<string>('backendUrl') || 'http://localhost:8848';
   apiKey = config.get<string>('apiKey') || undefined;
   useMCP = getUseMCPFromConfig(config);
   mcpServerPath = config.get<string>('mcpServerPath') || '';
   seamlessMode = config.get<boolean>('seamlessMode') ?? true;
+  outputChannel.appendLine(`[PowerMem] Config: backendUrl=${backendUrl}, enabled=${isEnabled}, useMCP=${useMCP}`);
   // In seamless mode, default auto-capture on save to true so extraction is automatic
   const explicitAutoCapture = config.inspect<boolean>('autoCapture.onSave');
   const explicitOnSave = explicitAutoCapture?.workspaceValue ?? explicitAutoCapture?.globalValue;
   autoCaptureOnSave = explicitOnSave !== undefined ? explicitOnSave : seamlessMode;
   autoCaptureInclude = config.get<string>('autoCapture.include') ?? '**/*.md,**/*.txt,**/docs/**';
-  autoCaptureMaxChars = Math.max(500, config.get<number>('autoCapture.maxChars') ?? 8000);
+  autoCaptureMaxChars = Math.max(500, config.get<number>('autoCapture.maxChars') ?? AUTO_CAPTURE_MAX_CHARS_DEFAULT);
   chatAutoSummarizeTurns = Math.max(0, config.get<number>('chat.autoSummarizeEveryNTurns') ?? 10);
   chatAutoRetrieve = config.get<boolean>('chat.autoRetrieve') ?? true;
   userId = getUserId(context, config);
@@ -277,13 +310,37 @@ export function activate(context: vscode.ExtensionContext): void {
   updateStatusBar('disconnected');
   statusBar.show();
 
-  checkHealth(backendUrl).then(async (connected) => {
+  // Retry health check with exponential backoff so the extension
+  // automatically connects once the backend becomes available.
+  const MAX_RETRIES = 6;
+  const INITIAL_DELAY_MS = 2000;
+  let retryDelay = INITIAL_DELAY_MS;
+  const attemptConnect = async (attempt: number): Promise<void> => {
+    outputChannel.appendLine(`[PowerMem] Health check attempt ${attempt + 1}/${MAX_RETRIES} → ${backendUrl}/api/v1/system/health`);
+    const connected = await checkHealth(backendUrl);
     if (connected) {
       await autoLinkAll();
       updateStatusBar('active');
+      outputChannel.appendLine(`[PowerMem] ✓ Connected on attempt ${attempt + 1}`);
+      console.log(`[PowerMem] Connected on attempt ${attempt + 1}`);
+      return;
+    }
+    outputChannel.appendLine(`[PowerMem] ✗ Health check failed (attempt ${attempt + 1}/${MAX_RETRIES}), retrying in ${retryDelay}ms…`);
+    console.warn(`[PowerMem] Health check failed (attempt ${attempt + 1}/${MAX_RETRIES}), retrying in ${retryDelay}ms…`);
+    if (attempt + 1 < MAX_RETRIES) {
+      await new Promise((r) => setTimeout(r, retryDelay));
+      retryDelay = Math.min(retryDelay * 2, 30000); // cap at 30s
+      await attemptConnect(attempt + 1);
     } else {
+      console.error('[PowerMem] All health check retries exhausted — staying disconnected');
+      outputChannel.appendLine('[PowerMem] ✗ All retries exhausted — staying disconnected. Click the status bar to reconnect.');
       updateStatusBar('disconnected');
     }
+  };
+  attemptConnect(0).catch((err) => {
+    console.error('[PowerMem] connect loop error:', err);
+    outputChannel.appendLine(`[PowerMem] ✗ Connect loop error: ${err}`);
+    updateStatusBar('disconnected');
   });
 
   context.subscriptions.push(
@@ -348,7 +405,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration('powermem')) return;
       const c = vscode.workspace.getConfiguration('powermem');
-      backendUrl = c.get<string>('backendUrl') || 'http://localhost:8000';
+      backendUrl = c.get<string>('backendUrl') || 'http://localhost:8848';
       apiKey = c.get<string>('apiKey') || undefined;
       useMCP = getUseMCPFromConfig(c);
       mcpServerPath = c.get<string>('mcpServerPath') || '';
@@ -358,7 +415,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const explicitOnSave = explicitAutoCapture?.workspaceValue ?? explicitAutoCapture?.globalValue;
       autoCaptureOnSave = explicitOnSave !== undefined ? explicitOnSave : seamlessMode;
       autoCaptureInclude = c.get<string>('autoCapture.include') ?? '**/*.md,**/*.txt,**/docs/**';
-      autoCaptureMaxChars = Math.max(500, c.get<number>('autoCapture.maxChars') ?? 8000);
+      autoCaptureMaxChars = Math.max(500, c.get<number>('autoCapture.maxChars') ?? AUTO_CAPTURE_MAX_CHARS_DEFAULT);
       chatAutoSummarizeTurns = Math.max(0, c.get<number>('chat.autoSummarizeEveryNTurns') ?? 10);
       chatAutoRetrieve = c.get<boolean>('chat.autoRetrieve') ?? true;
       // Re-link AI tools when connection/backend config changes so user does not need to click "Link to AI tools"

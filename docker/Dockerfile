@@ -1,7 +1,7 @@
 # Multi-stage build for PowerMem Server
 FROM node:20-slim as frontend-builder
 WORKDIR /dashboard-build
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 COPY dashboard/package.json dashboard/pnpm-lock.yaml ./
 RUN pnpm install
 COPY dashboard/ ./
@@ -54,7 +54,7 @@ RUN pip config set global.timeout 300 && \
         fi; \
     fi && \
     pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir .
+    pip install --no-cache-dir '.[server,seekdb]'
 
 # Final stage
 FROM python:3.11-slim
@@ -98,20 +98,20 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 USER powermem
 
 # Expose default port
-EXPOSE 8000
+EXPOSE 8848
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     POWERMEM_SERVER_HOST=0.0.0.0 \
-    POWERMEM_SERVER_PORT=8000
+    POWERMEM_SERVER_PORT=8848
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/api/v1/system/health || exit 1
+    CMD curl -f http://localhost:8848/api/v1/system/health || exit 1
 
 # Use entrypoint script
 ENTRYPOINT ["docker-entrypoint.sh"]
 
-# Default command: API server + PMem Dashboard on port 8000
-CMD ["powermem-server", "--host", "0.0.0.0", "--port", "8000"]
+# Default command: API server + PMem Dashboard on port 8848
+CMD ["powermem-server", "--host", "0.0.0.0", "--port", "8848"]

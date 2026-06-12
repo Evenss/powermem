@@ -151,11 +151,8 @@ class EbbinghausIntelligencePlugin(IntelligentMemoryPlugin):
                 "importance_score": importance_score,
             }
 
-            # Check if memory should be forgotten
-            if self._algo.should_forget(normalized):
-                return None, True
-
-            # Check if memory should be promoted
+            # Check promotion first — an accessed memory that qualifies for
+            # promotion should not be forgotten in the same on_get call.
             new_memory_type = memory_type
             if self._algo.should_promote(normalized):
                 if memory_type == "working":
@@ -166,6 +163,18 @@ class EbbinghausIntelligencePlugin(IntelligentMemoryPlugin):
                     new_memory_type = "long_term"
                     updates["memory_type"] = "long_term"
                     meta_updates["memory_type"] = "long_term"
+
+            # Clear forget marker on promotion — a promoted memory should
+            # no longer carry the 0.1x search penalty from a prior soft-forget.
+            if new_memory_type != memory_type:
+                meta_updates["should_forget"] = False
+                meta_updates["marked_for_forgetting_at"] = None
+                updates["should_forget"] = False
+                updates["marked_for_forgetting_at"] = None
+
+            # Only check forget if not promoted in this call
+            if new_memory_type == memory_type and self._algo.should_forget(normalized):
+                return None, True
 
             # Check if memory should be archived
             if self._algo.should_archive(normalized):
@@ -194,32 +203,31 @@ class EbbinghausIntelligencePlugin(IntelligentMemoryPlugin):
             return None, False
 
     def on_search(self, results: List[Dict[str, Any]]) -> Tuple[List[Tuple[str, Dict[str, Any]]], List[str]]:
+        """Process search results: update access counts and promote, but never
+        trigger soft-deletion — search is a read operation and should not mutate
+        memory lifecycle state."""
         if not self.enabled or not self._algo:
             return [], []
         updates: List[Tuple[str, Dict[str, Any]]] = []
-        deletes: List[str] = []
-        
+
         for item in results:
             try:
                 mem_id = item.get("id") or item.get("memory_id")
                 if not mem_id:
                     continue
-                
-                # Process individual memory
+
                 upd, delete_flag = self.on_get(item)
-                
-                if delete_flag:
-                    deletes.append(mem_id)
-                elif upd:
-                    # Add search-specific enhancements
+
+                # Ignore delete_flag: searching should not soft-forget memories
+                if upd:
                     search_updates = self._enhance_for_search(item, upd)
                     updates.append((mem_id, search_updates))
-                    
+
             except Exception as e:
                 logger.warning(f"Failed to process memory {mem_id} in on_search: {e}")
                 continue
-                
-        return updates, deletes
+
+        return updates, []
     
     def _enhance_for_search(self, memory: Dict[str, Any], base_updates: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -233,20 +241,22 @@ class EbbinghausIntelligencePlugin(IntelligentMemoryPlugin):
             Enhanced updates for search context
         """
         try:
-            # Add search-specific metadata
-            search_metadata = memory.get("metadata", {})
-            search_metadata["last_searched_at"] = get_current_datetime()
-            search_metadata["search_count"] = search_metadata.get("search_count", 0) + 1
-            
-            # Update base updates with search metadata
             enhanced_updates = base_updates.copy()
-            enhanced_updates["metadata"] = search_metadata
+            base_metadata = dict(base_updates.get("metadata") or {})
+            base_metadata["last_searched_at"] = get_current_datetime()
+            base_metadata["search_count"] = base_metadata.get("search_count", 0) + 1
+            enhanced_updates["metadata"] = base_metadata
             
             # Add search relevance score if not present
             if "search_relevance_score" not in memory:
                 # Simple relevance calculation based on access patterns
-                access_count = memory.get("access_count", 0)
-                importance_score = memory.get("importance_score", 0.5)
+                access_count = enhanced_updates.get(
+                    "access_count",
+                    base_metadata.get("access_count", memory.get("access_count", 0)),
+                )
+                importance_score = base_metadata.get(
+                    "importance_score", memory.get("importance_score", 0.5)
+                )
                 search_relevance = min(1.0, (access_count * 0.1) + (importance_score * 0.5))
                 enhanced_updates["search_relevance_score"] = search_relevance
             

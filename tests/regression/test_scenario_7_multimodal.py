@@ -74,13 +74,13 @@ custom_config = {
     "vector_store": {
         "provider": "oceanbase",
         "config": {
-            "collection_name": "memories",  # Changed to avoid dimension mismatch
+            "collection_name": os.getenv("OCEANBASE_COLLECTION", "memories_1536"),
             "connection_args": {
                 "host": os.getenv("OCEANBASE_HOST", "127.0.0.1"),
                 "port": int(os.getenv("OCEANBASE_PORT", "10001")),
                 "user": os.getenv("OCEANBASE_USER", "root"),
                 "password": os.getenv("OCEANBASE_PASSWORD", ""),
-                "db_name": os.getenv("OCEANBASE_DB", "powermem"),
+                "db_name": os.getenv("OCEANBASE_DATABASE", "powermem"),
             },
             "vidx_metric_type": "cosine",
             "index_type": "IVF_FLAT",

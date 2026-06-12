@@ -3,6 +3,8 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Union
 
+logger = logging.getLogger(__name__)
+
 from openai import OpenAI
 from powermem.integrations.llm import LLMBase
 from powermem.integrations.llm.config.base import BaseLLMConfig
@@ -49,6 +51,7 @@ class OpenAILLM(LLMBase):
                 enable_vision=config.enable_vision,
                 vision_details=config.vision_details,
                 http_client_proxies=config.http_client,
+                default_headers=getattr(config, "default_headers", None),
             )
 
         super().__init__(config)
@@ -56,18 +59,26 @@ class OpenAILLM(LLMBase):
         if not self.config.model:
             self.config.model = "gpt-4o-mini"
 
+        default_headers = getattr(self.config, "default_headers", None)
+
         if os.environ.get("OPENROUTER_API_KEY"):  # Use OpenRouter
-            self.client = OpenAI(
-                api_key=os.environ.get("OPENROUTER_API_KEY"),
-                base_url=getattr(self.config, "openrouter_base_url", None)
+            client_kwargs = {
+                "api_key": os.environ.get("OPENROUTER_API_KEY"),
+                "base_url": getattr(self.config, "openrouter_base_url", None)
                 or os.getenv("OPENROUTER_API_BASE")
                 or "https://openrouter.ai/api/v1",
-            )
+            }
+            if default_headers:
+                client_kwargs["default_headers"] = default_headers
+            self.client = OpenAI(**client_kwargs)
         else:
             api_key = self.config.api_key or os.getenv("OPENAI_API_KEY")
             base_url = getattr(self.config, "openai_base_url", None) or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
 
-            self.client = OpenAI(api_key=api_key, base_url=base_url)
+            client_kwargs = {"api_key": api_key, "base_url": base_url}
+            if default_headers:
+                client_kwargs["default_headers"] = default_headers
+            self.client = OpenAI(**client_kwargs)
 
     def _parse_response(self, response, tools):
         """
@@ -93,7 +104,7 @@ class OpenAILLM(LLMBase):
 
                     # Check if arguments are empty or whitespace only
                     if not arguments_str or arguments_str.strip() == "":
-                        logging.warning(
+                        logger.warning(
                             f"Tool call '{tool_call.function.name}' has empty arguments. Skipping this tool call."
                         )
                         continue
@@ -102,7 +113,7 @@ class OpenAILLM(LLMBase):
                     try:
                         arguments = json.loads(arguments_str)
                     except json.JSONDecodeError as e:
-                        logging.error(
+                        logger.error(
                             f"Failed to parse tool call arguments for '{tool_call.function.name}': "
                             f"{arguments_str[:100]}... Error: {e}"
                         )
@@ -185,6 +196,6 @@ class OpenAILLM(LLMBase):
                 response_callback(self, response, params)
             except Exception as e:
                 # Log error but don't propagate
-                logging.error(f"Error due to callback: {e}")
+                logger.error(f"Error due to callback: {e}")
                 pass
         return parsed_response

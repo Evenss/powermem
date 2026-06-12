@@ -73,6 +73,9 @@ class OceanBaseVectorStore(VectorStoreBase):
             sparse_weight: float = 0.25,
             reranker: Optional[Any] = None,
             enable_native_hybrid: bool = False,
+            create_vector_index: bool = True,
+            pool_recycle: int = 3600,
+            pool_pre_ping: bool = True,
             **kwargs,
     ):
         """
@@ -104,10 +107,13 @@ class OceanBaseVectorStore(VectorStoreBase):
             sparse_weight (Optional[float]): Weight for sparse vector search in hybrid search.
             reranker (Optional[Any]): Reranker model for fine ranking.
             enable_native_hybrid (bool): Whether to enable OceanBase native hybrid search (DBMS_HYBRID_SEARCH.SEARCH).
+            pool_recycle (int): SQLAlchemy pool_recycle in seconds (default: 3600).
+            pool_pre_ping (bool): SQLAlchemy pool_pre_ping (default: True).
         """
         self.normalize = normalize
         self.include_sparse = include_sparse
         self.auto_configure_vector_index = auto_configure_vector_index
+        self.create_vector_index = create_vector_index
         self.hybrid_search = hybrid_search
         self.fulltext_parser = fulltext_parser
         self.vector_weight = vector_weight
@@ -136,6 +142,8 @@ class OceanBaseVectorStore(VectorStoreBase):
             "password": password or connection_args.get("password", constants.DEFAULT_OCEANBASE_CONNECTION["password"]),
             "db_name": db_name or connection_args.get("db_name", constants.DEFAULT_OCEANBASE_CONNECTION["db_name"]),
             "ob_path": ob_path or connection_args.get("ob_path", constants.DEFAULT_OCEANBASE_CONNECTION["ob_path"]),
+            "pool_recycle": pool_recycle,
+            "pool_pre_ping": pool_pre_ping,
         }
 
         self.connection_args = final_connection_args
@@ -197,11 +205,15 @@ class OceanBaseVectorStore(VectorStoreBase):
             port = self.connection_args.get("port")
             user = self.connection_args.get("user")
             password = self.connection_args.get("password")
+            pool_recycle = self.connection_args.get("pool_recycle", 3600)
+            pool_pre_ping = self.connection_args.get("pool_pre_ping", True)
             self.obvector = ObVecClient(
                 uri=f"{host}:{port}",
                 user=user,
                 password=password,
                 db_name=db_name,
+                pool_pre_ping=pool_pre_ping,
+                pool_recycle=pool_recycle,
                 **kwargs,
             )
         else:
@@ -281,17 +293,19 @@ class OceanBaseVectorStore(VectorStoreBase):
             Column(self.fulltext_field, LONGTEXT)
         ]
 
-        # Create vector index parameters
-        vidx_params = self.obvector.prepare_index_params()
+        # Create vector index parameters (optional)
+        vidx_params = None
+        if self.create_vector_index:
+            vidx_params = self.obvector.prepare_index_params()
 
-        # Add dense vector index
-        vidx_params.add_index(
-            field_name=self.vector_field,
-            index_type=constants.OCEANBASE_SUPPORTED_VECTOR_INDEX_TYPES[self.index_type],
-            index_name=self.vidx_name,
-            metric_type=self.vidx_metric_type,
-            params=self.vidx_algo_params,
-        )
+            # Add dense vector index
+            vidx_params.add_index(
+                field_name=self.vector_field,
+                index_type=constants.OCEANBASE_SUPPORTED_VECTOR_INDEX_TYPES[self.index_type],
+                index_name=self.vidx_name,
+                metric_type=self.vidx_metric_type,
+                params=self.vidx_algo_params,
+            )
 
         fts_index_param = None
         if self.hybrid_search:
@@ -308,14 +322,15 @@ class OceanBaseVectorStore(VectorStoreBase):
             if OceanBaseUtil.check_sparse_vector_version_support(self.obvector):
                 cols.append(Column(self.sparse_vector_field, SPARSE_VECTOR))
                 logger.info(f"Including sparse_embedding column in new table '{self.collection_name}'")
-                vidx_params.add_index(
-                    field_name=self.sparse_vector_field,
-                    index_type="daat",
-                    index_name="sparse_embedding_idx",
-                    metric_type="inner_product",
-                    sparse_index_type="sindi",  # use sindi index type
-                )
-                logger.debug(f"Added sparse vector index configuration for table '{self.collection_name}'")
+                if vidx_params is not None:
+                    vidx_params.add_index(
+                        field_name=self.sparse_vector_field,
+                        index_type="daat",
+                        index_name="sparse_embedding_idx",
+                        metric_type="inner_product",
+                        sparse_index_type="sindi",  # use sindi index type
+                    )
+                    logger.debug(f"Added sparse vector index configuration for table '{self.collection_name}'")
             else:
                 logger.warning(
                     "Database does not support SPARSE_VECTOR type. "
@@ -328,6 +343,19 @@ class OceanBaseVectorStore(VectorStoreBase):
         if self.enable_native_hybrid:
             table_kwargs['mysql_organization'] = 'heap'
             logger.info(f"Creating heap table '{self.collection_name}' for native hybrid search support")
+
+        # Set LOB inrow threshold so VECTOR column data is stored in-row.
+        # IVF_FLAT index cannot be created on outrow LOB columns.
+        if self.embedding_model_dims is not None:
+            lob_threshold = max(16384, self.embedding_model_dims * 4 + 1024)
+            try:
+                with self.obvector.engine.connect() as conn:
+                    conn.execute(text(f"SET SESSION ob_default_lob_inrow_threshold = {lob_threshold}"))
+                    conn.commit()
+                logger.debug(f"Set ob_default_lob_inrow_threshold = {lob_threshold} for table creation")
+            except Exception as e:
+                logger.warning(f"Could not set ob_default_lob_inrow_threshold={lob_threshold}: {e}. "
+                               "Continuing without LOB inrow threshold (may affect vector index creation on some engines).")
 
         self.obvector.create_table_with_index_params(
             table_name=self.collection_name,
@@ -390,14 +418,14 @@ class OceanBaseVectorStore(VectorStoreBase):
                 "Please configure embedding_model_dims in your OceanBaseConfig."
             )
 
-        # Embedded SeekDB does not tolerate IVF-family indexes on small datasets:
+        # Embedded seekdb does not tolerate IVF-family indexes on small datasets:
         # IVF requires at least nlist training vectors; fewer vectors causes a native
         # SIGSEGV that cannot be caught by Python.  Switch to HNSW automatically.
         is_embedded = not self.connection_args.get("host")
         if is_embedded and self.index_type in constants.INDEX_TYPE_IVF:
             nlist = (self.vidx_algo_params or {}).get("nlist", constants.DEFAULT_OCEANBASE_IVF_BUILD_PARAM.get("nlist", 128))
             logger.warning(
-                "Embedded SeekDB: index_type '%s' (nlist=%d) requires at least %d vectors "
+                "Embedded seekdb: index_type '%s' (nlist=%d) requires at least %d vectors "
                 "and may crash on small datasets. Auto-switching to HNSW.",
                 self.index_type, nlist, nlist,
             )
@@ -621,10 +649,10 @@ class OceanBaseVectorStore(VectorStoreBase):
         record = self.model_class()
 
         # Support both SQLAlchemy Row objects and plain dicts (used when rows
-        # are materialised early to avoid embedded SeekDB cursor crashes).
+        # are materialised early to avoid embedded seekdb cursor crashes).
         mapping = row._mapping if hasattr(row, '_mapping') else row
 
-        # Build a normalized lookup: strip table-name prefix that embedded SeekDB
+        # Build a normalized lookup: strip table-name prefix that embedded seekdb
         # may add (e.g. "memories.document" → "document") so we can always find
         # the value regardless of whether the driver returns bare or prefixed keys.
         normalized: Dict[str, any] = {}
@@ -1000,7 +1028,7 @@ class OceanBaseVectorStore(VectorStoreBase):
 
             # Execute the query with parameters - use direct parameter passing
             # Materialize rows to dicts inside the connection context to avoid
-            # "pure virtual method called" crash in embedded SeekDB (the C++
+            # "pure virtual method called" crash in embedded seekdb (the C++
             # cursor is invalidated once the transaction/connection closes).
             with self.obvector.engine.connect() as conn:
                 with conn.begin():
@@ -1120,7 +1148,7 @@ class OceanBaseVectorStore(VectorStoreBase):
 
             # Execute the query
             # Materialize rows to dicts inside the connection context to avoid
-            # "pure virtual method called" crash in embedded SeekDB.
+            # "pure virtual method called" crash in embedded seekdb.
             with self.obvector.engine.connect() as conn:
                 with conn.begin():
                     logger.debug(f"Executing sparse vector search query with sparse_vector: {sparse_vector_str}")
@@ -1360,7 +1388,7 @@ class OceanBaseVectorStore(VectorStoreBase):
         is_embedded = not self.connection_args.get("host")
 
         if is_embedded:
-            # SeekDB embedded engine does not support concurrent SQL across threads
+            # seekdb embedded engine does not support concurrent SQL across threads
             try:
                 vector_results = self._vector_search(query, vectors, candidate_limit, filters)
             except Exception as e:
@@ -1883,7 +1911,7 @@ class OceanBaseVectorStore(VectorStoreBase):
         """Fetch rows by primary key while keeping the connection open during fetchall.
 
         pyobvector.get() returns the cursor *after* committing the transaction via
-        ``with conn.begin()``.  In embedded SeekDB the commit invalidates the cursor,
+        ``with conn.begin()``.  In embedded seekdb the commit invalidates the cursor,
         so calling fetchall() on it afterwards triggers a C++ ``pure virtual method
         called`` crash.  This helper avoids that by running fetchall() inside the
         ``with engine.connect()`` block.

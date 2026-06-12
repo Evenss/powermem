@@ -21,6 +21,7 @@ from powermem.agent.components.scope_controller import ScopeController
 from powermem.agent.components.permission_controller import PermissionController
 from powermem.agent.components.collaboration_coordinator import CollaborationCoordinator
 from powermem.agent.components.privacy_protector import PrivacyProtector
+from powermem.agent.filters import matches_memory_filters
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             logger.info("Multi-agent memory manager initialized successfully")
             
         except Exception as e:
-            logger.error(f"Failed to initialize multi-agent memory manager: {e}")
+            logger.error(f"Failed to initialize multi-agent memory manager: {e}", exc_info=True)
             raise
     
     def _initialize_agent_groups(self) -> None:
@@ -307,7 +308,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             }
             
         except Exception as e:
-            logger.error(f"Failed to process memory for agent {agent_id}: {e}")
+            logger.error(f"Failed to process memory for agent {agent_id}: {e}", exc_info=True)
             raise
     
     def _persist_memory_to_storage(self, memory_data: Dict[str, Any]) -> int:
@@ -364,7 +365,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
                 raise ValueError("Failed to persist memory to database")
             
         except Exception as e:
-            logger.error(f"Failed to persist memory to storage: {e}")
+            logger.error(f"Failed to persist memory to storage: {e}", exc_info=True)
             # Re-raise exception to allow caller to handle it
             raise
     
@@ -531,6 +532,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
                     'agent_id': db_memory.get('agent_id', agent_id),
                     'user_id': db_memory.get('user_id'),
                     'run_id': db_memory.get('run_id'),
+                    'category': db_memory.get('category'),
                     'metadata': db_memory.get('metadata', {}),
                     'created_at': db_memory.get('created_at'),
                     'updated_at': db_memory.get('updated_at'),
@@ -546,7 +548,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
                 try:
                     scope = MemoryScope(scope_str) if isinstance(scope_str, str) else scope_str
                 except (ValueError, TypeError):
-                    scope = MemoryScope.AGENT  # Default scope
+                    scope = MemoryScope.AGENT_GROUP  # Backward-compatible "agent" scope
                 
                 try:
                     memory_type = MemoryType(memory_type_str) if isinstance(memory_type_str, str) else memory_type_str
@@ -636,12 +638,14 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             
             # Apply additional filters if provided
             if filters:
-                for key, value in filters.items():
-                    if key != 'user_id':  # user_id already used for database query
-                        accessible_memories = [
-                            memory for memory in accessible_memories
-                            if memory.get(key) == value
-                        ]
+                additional_filters = {
+                    key: value for key, value in filters.items()
+                    if key != 'user_id'  # user_id already used for database query
+                }
+                accessible_memories = [
+                    memory for memory in accessible_memories
+                    if matches_memory_filters(memory, additional_filters)
+                ]
             
             # Update access statistics
             for memory in accessible_memories:
@@ -711,7 +715,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             }
             
         except Exception as e:
-            logger.error(f"Failed to update memory {memory_id}: {e}")
+            logger.error(f"Failed to update memory {memory_id}: {e}", exc_info=True)
             raise
     
     def delete_memory(
@@ -767,7 +771,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             }
             
         except Exception as e:
-            logger.error(f"Failed to delete memory {memory_id}: {e}")
+            logger.error(f"Failed to delete memory {memory_id}: {e}", exc_info=True)
             raise
     
     def share_memory(
@@ -850,7 +854,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             }
             
         except Exception as e:
-            logger.error(f"Failed to share memory {memory_id}: {e}")
+            logger.error(f"Failed to share memory {memory_id}: {e}", exc_info=True)
             raise
     
     def get_context_info(self, agent_id: str) -> Dict[str, Any]:
@@ -890,7 +894,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             return context_info
             
         except Exception as e:
-            logger.error(f"Failed to get context info for agent {agent_id}: {e}")
+            logger.error(f"Failed to get context info for agent {agent_id}: {e}", exc_info=True)
             raise
     
     def update_memory_decay(self) -> Dict[str, Any]:
@@ -961,7 +965,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             return decay_results
             
         except Exception as e:
-            logger.error(f"Failed to update memory decay: {e}")
+            logger.error(f"Failed to update memory decay: {e}", exc_info=True)
             raise
     
     def cleanup_forgotten_memories(self) -> Dict[str, Any]:
@@ -1004,7 +1008,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             return cleanup_results
             
         except Exception as e:
-            logger.error(f"Failed to cleanup forgotten memories: {e}")
+            logger.error(f"Failed to cleanup forgotten memories: {e}", exc_info=True)
             raise
     
     def get_memory_statistics(self) -> Dict[str, Any]:
@@ -1058,7 +1062,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             return stats
             
         except Exception as e:
-            logger.error(f"Failed to get memory statistics: {e}")
+            logger.error(f"Failed to get memory statistics: {e}", exc_info=True)
             raise
     
     def check_permission(
@@ -1121,7 +1125,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             # Set default permissions if not provided
             if permissions is None:
                 permissions = {
-                    'owner': ['read', 'write', 'delete', 'admin'],
+                    'owner': ['read', 'write', 'delete', 'share', 'admin'],
                     'collaborator': ['read', 'write'],
                     'viewer': ['read']
                 }
@@ -1152,7 +1156,7 @@ class MultiAgentMemoryManager(AgentMemoryManagerBase):
             }
             
         except Exception as e:
-            logger.error(f"Failed to create group '{group_name}': {e}")
+            logger.error(f"Failed to create group '{group_name}': {e}", exc_info=True)
             return {
                 'success': False,
                 'error': str(e),

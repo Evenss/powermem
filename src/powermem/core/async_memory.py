@@ -41,6 +41,13 @@ from ..prompts.intelligent_memory_prompts import (
 logger = logging.getLogger(__name__)
 
 
+def _forget_marker_updates() -> Dict[str, Any]:
+    return {
+        "should_forget": True,
+        "marked_for_forgetting_at": get_current_datetime().isoformat(),
+    }
+
+
 def _auto_convert_config(config: Dict[str, Any]) -> Dict[str, Any]:
     """
     Convert legacy powermem config to format for compatibility.
@@ -481,6 +488,9 @@ class AsyncMemory(MemoryBase):
                 messages = parse_vision_messages(messages, self.llm, llm_cfg.get("vision_details"))
             else:
                 messages = parse_vision_messages(messages)
+
+            if isinstance(messages, list) and len(messages) == 0:
+                return {"results": []}
             
             # Use self.agent_id as fallback if agent_id is not provided
             agent_id = agent_id or self.agent_id
@@ -1073,9 +1083,16 @@ class AsyncMemory(MemoryBase):
                         await self.storage.update_memory_async(mem_id, {**upd}, user_id, agent_id)
                     except Exception:
                         continue
+                # The plugin's "deletes" are memories that should be
+                # forgotten by marking, not physically removed from storage.
                 for mem_id in deletes:
                     try:
-                        await self.storage.delete_memory_async(mem_id, user_id, agent_id)
+                        await self.storage.update_memory_async(
+                            mem_id,
+                            _forget_marker_updates(),
+                            user_id,
+                            agent_id,
+                        )
                     except Exception:
                         continue
             
@@ -1171,8 +1188,9 @@ class AsyncMemory(MemoryBase):
                     updates, delete_flag = self._intelligence_plugin.on_get(result)
                     try:
                         if delete_flag:
-                            await self.storage.delete_memory_async(memory_id, user_id, agent_id)
-                            return None
+                            if updates is None:
+                                updates = {}
+                            updates.update(_forget_marker_updates())
                         if updates:
                             await self.storage.update_memory_async(memory_id, {**updates}, user_id, agent_id)
                     except Exception:
@@ -1364,7 +1382,6 @@ class AsyncMemory(MemoryBase):
             if self.enable_graph:
                 filters = {**(filters or {}), "user_id": user_id, "agent_id": agent_id, "run_id": run_id}
                 graph_results = await asyncio.to_thread(self.graph_store.get_all, filters, limit + offset)
-                results.extend(graph_results)
                 return {"results": results, "relations": graph_results}
 
             return {"results": results}

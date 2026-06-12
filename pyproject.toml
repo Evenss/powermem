@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "powermem"
-version = "1.1.1"
+version = "1.1.3"
 description = "Intelligent Memory System - Persistent memory layer for LLM applications"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -27,14 +27,11 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "httpx>=0.24.0",
     "sqlalchemy>=2.0.0",
-    "numpy>=1.21.0",
+    "greenlet<3.0; python_version < '3.12'",
+    "greenlet>=3.0; python_version >= '3.12'",
+    "numpy>=1.21.0,<2.0.0",
     "pytz>=2023.3",
     "python-dotenv>=1.0.0",
-    "fastapi>=0.100.0",
-    "python-multipart>=0.0.6",
-    "uvicorn>=0.23.0",
-    "slowapi>=0.1.9",
-    "click>=8.0.0",
     "rank-bm25>=0.2.2",
     "pyobvector>=0.2.24,<0.3.0",
     "sqlglot>=26.0.1,<26.25.0",
@@ -54,15 +51,36 @@ dependencies = [
     "dashscope>=1.14.0",
     "psutil>=5.9.0",
     "zai-sdk>=0.2.0",
-    "pyseekdb>=0.1.0",
 ]
 
 [project.optional-dependencies]
+cli = [
+    "click>=8.0.0",
+]
+server = [
+    "click>=8.0.0",
+    "fastapi>=0.100.0",
+    "python-multipart>=0.0.6",
+    "uvicorn>=0.23.0",
+    "slowapi>=0.1.9",
+]
+mcp = [
+    "fastmcp>=1.0",
+    "uvicorn>=0.27.1",
+]
+seekdb = [
+    "pyobvector[pyseekdb]>=0.2.24,<0.3.0",
+]
+extras = [
+    "sentence-transformers>=5.0.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
-    "pytest-playwright>=0.5.0", 
-    "playwright>=1.40.0", 
+    "pytest-playwright>=0.4.3,<0.6.0; python_version < '3.12'",
+    "pytest-playwright>=0.6.0,<0.9.0; python_version >= '3.12'",
+    "playwright>=1.33.0,<1.39.0; python_version < '3.12'",
+    "playwright>=1.40.0,<2.0.0; python_version >= '3.12'",
     "pytest-cov>=4.0.0",
     "black>=23.0.0",
     "isort>=5.12.0",
@@ -78,16 +96,12 @@ test = [
     "langchain-openai>=1.1.0",
     "langchain-community>=0.4.1",
 ]
-extras = [
-    "sentence-transformers>=5.0.0",
-]
-
 
 [project.urls]
-Homepage = "https://github.com/powermem/powermem"
-Documentation = "https://powermem.readthedocs.io"
-Repository = "https://github.com/powermem/powermem.git"
-Issues = "https://github.com/powermem/powermem/issues"
+Homepage = "https://github.com/oceanbase/powermem"
+Documentation = "https://www.powermem.ai/docs"
+Repository = "https://github.com/oceanbase/powermem.git"
+Issues = "https://github.com/oceanbase/powermem/issues"
 
 [tool.setuptools]
 include-package-data = true
@@ -103,8 +117,9 @@ server = ["dashboard/**"]
 
 [project.scripts]
 powermem-server = "server.cli.server:server"
-pmem = "powermem.cli.main:cli"
-powermem-cli = "powermem.cli.main:cli"
+pmem            = "powermem.cli.main:cli"
+powermem-cli    = "powermem.cli.main:cli"
+powermem-mcp    = "powermem.mcp.server:main"
 
 [tool.black]
 line-length = 88
@@ -112,7 +127,6 @@ target-version = ['py311']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
-  # directories
   \.eggs
   | \.git
   | \.hg
@@ -147,6 +161,7 @@ strict_equality = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -156,5 +171,6 @@ markers = [
     "integration: Integration tests",
     "e2e: End-to-end tests",
     "e2e_config: End-to-end tests requiring real configuration (not included in default test suite)",
+    "api: Tests requiring external API credentials",
     "slow: Slow running tests",
 ]

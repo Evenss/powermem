@@ -15,6 +15,7 @@ from powermem.agent.types import (
     PrivacyLevel,
     AccessPermission
 )
+from powermem.agent.filters import matches_memory_filters
 from powermem.intelligence.intelligent_memory_manager import IntelligentMemoryManager
 from powermem.agent.abstract.manager import AgentMemoryManagerBase
 
@@ -70,7 +71,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             logger.info("Multi-user memory manager initialized successfully")
             
         except Exception as e:
-            logger.error(f"Failed to initialize multi-user memory manager: {e}")
+            logger.error(f"Failed to initialize multi-user memory manager: {e}", exc_info=True)
             raise
     
     def _initialize_user_contexts(self) -> None:
@@ -233,7 +234,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             }
             
         except Exception as e:
-            logger.error(f"Failed to process memory for user {agent_id}: {e}")
+            logger.error(f"Failed to process memory for user {agent_id}: {e}", exc_info=True)
             raise
     
     def _persist_memory_to_storage(self, memory_data: Dict[str, Any]) -> int:
@@ -295,7 +296,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
                 raise ValueError("Failed to get memory ID from database: Missing 'id' in result")
             
         except Exception as e:
-            logger.error(f"Failed to persist memory to storage: {e}")
+            logger.error(f"Failed to persist memory to storage: {e}", exc_info=True)
             # Re-raise exception to allow caller to handle it
             raise
     
@@ -567,6 +568,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
                     'user_id': db_memory.get('user_id', user_id),
                     'agent_id': db_memory.get('agent_id', agent_id),
                     'run_id': db_memory.get('run_id'),
+                    'category': db_memory.get('category'),
                     'metadata': db_memory.get('metadata', {}),
                     'created_at': db_memory.get('created_at'),
                     'updated_at': db_memory.get('updated_at'),
@@ -642,12 +644,14 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             
             # Apply additional filters if provided
             if filters:
-                for key, value in filters.items():
-                    if key != 'user_id':  # user_id already used for database query
-                        accessible_memories = [
-                            memory for memory in accessible_memories
-                            if memory.get(key) == value
-                        ]
+                additional_filters = {
+                    key: value for key, value in filters.items()
+                    if key != 'user_id'  # user_id already used for database query
+                }
+                accessible_memories = [
+                    memory for memory in accessible_memories
+                    if matches_memory_filters(memory, additional_filters)
+                ]
             
             # Update access statistics
             for memory in accessible_memories:
@@ -727,7 +731,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             }
             
         except Exception as e:
-            logger.error(f"Failed to update memory {memory_id}: {e}")
+            logger.error(f"Failed to update memory {memory_id}: {e}", exc_info=True)
             raise
     
     def delete_memory(
@@ -783,7 +787,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             }
             
         except Exception as e:
-            logger.error(f"Failed to delete memory {memory_id}: {e}")
+            logger.error(f"Failed to delete memory {memory_id}: {e}", exc_info=True)
             raise
     
     def share_memory(
@@ -840,7 +844,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             }
             
         except Exception as e:
-            logger.error(f"Failed to share memory {memory_id}: {e}")
+            logger.error(f"Failed to share memory {memory_id}: {e}", exc_info=True)
             raise
     
     def get_context_info(self, agent_id: str) -> Dict[str, Any]:
@@ -880,7 +884,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             return context_info
             
         except Exception as e:
-            logger.error(f"Failed to get context info for user {agent_id}: {e}")
+            logger.error(f"Failed to get context info for user {agent_id}: {e}", exc_info=True)
             raise
     
     def update_memory_decay(self) -> Dict[str, Any]:
@@ -951,7 +955,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             return decay_results
             
         except Exception as e:
-            logger.error(f"Failed to update memory decay: {e}")
+            logger.error(f"Failed to update memory decay: {e}", exc_info=True)
             raise
     
     def cleanup_forgotten_memories(self) -> Dict[str, Any]:
@@ -994,7 +998,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             return cleanup_results
             
         except Exception as e:
-            logger.error(f"Failed to cleanup forgotten memories: {e}")
+            logger.error(f"Failed to cleanup forgotten memories: {e}", exc_info=True)
             raise
     
     def get_memory_statistics(self) -> Dict[str, Any]:
@@ -1040,7 +1044,7 @@ class MultiUserMemoryManager(AgentMemoryManagerBase):
             return stats
             
         except Exception as e:
-            logger.error(f"Failed to get memory statistics: {e}")
+            logger.error(f"Failed to get memory statistics: {e}", exc_info=True)
             raise
     
     def check_permission(

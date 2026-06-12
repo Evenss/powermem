@@ -4,6 +4,7 @@ Logging middleware for PowerMem API
 
 import logging
 import os
+import re
 import sys
 import json
 import time
@@ -16,6 +17,30 @@ from starlette.types import ASGIApp
 from ..config import config
 from ..utils.metrics import get_metrics_collector
 from ..models.errors import APIError
+
+try:
+    from powermem.logging_config import parse_log_max_bytes as _parse_max_bytes
+except ImportError:
+    def _parse_max_bytes(s, default=100 * 1024 * 1024):
+        if not s:
+            return default
+        text = str(s).strip().upper()
+        try:
+            if text.endswith("GB"):
+                return int(float(text[:-2].strip()) * 1024 * 1024 * 1024)
+            if text.endswith("MB"):
+                return int(float(text[:-2].strip()) * 1024 * 1024)
+            if text.endswith("KB"):
+                return int(float(text[:-2].strip()) * 1024)
+            return int(text)
+        except ValueError:
+            return default
+
+
+def _get_server_rotation_params():
+    max_bytes = _parse_max_bytes(os.environ.get("POWERMEM_SERVER_LOG_MAX_SIZE"), default=100 * 1024 * 1024)
+    backup_count = int(os.environ.get("POWERMEM_SERVER_LOG_BACKUP_COUNT", "5"))
+    return max_bytes, backup_count
 
 # Setup logger
 logger = logging.getLogger("server")
@@ -54,11 +79,12 @@ def setup_logging():
             
             # Use RotatingFileHandler with append mode to preserve history
             # Max file size: 10MB, keep 5 backup files
+            _max_bytes, _backup_count = _get_server_rotation_params()
             file_handler = RotatingFileHandler(
                 log_file_path,
-                mode='a',  # Append mode to preserve history
-                maxBytes=10 * 1024 * 1024,  # 10MB
-                backupCount=5,
+                mode='a',
+                maxBytes=_max_bytes,
+                backupCount=_backup_count,
                 encoding='utf-8'
             )
             file_handler.setLevel(log_level)
@@ -93,22 +119,9 @@ def setup_logging():
             uvicorn_console_handler.setFormatter(text_formatter)
         uvicorn_logger.addHandler(uvicorn_console_handler)
         
-        # Add file handler if configured
+        # Share the server file handler to avoid rotation race conditions
         if file_handler:
-            # Create a new file handler for each logger (they share the same file)
-            uvicorn_file_handler = RotatingFileHandler(
-                os.path.abspath(config.log_file),
-                mode='a',
-                maxBytes=10 * 1024 * 1024,
-                backupCount=5,
-                encoding='utf-8'
-            )
-            uvicorn_file_handler.setLevel(log_level)
-            if config.log_format == "json":
-                uvicorn_file_handler.setFormatter(JsonFormatter())
-            else:
-                uvicorn_file_handler.setFormatter(text_formatter)
-            uvicorn_logger.addHandler(uvicorn_file_handler)
+            uvicorn_logger.addHandler(file_handler)
         
         uvicorn_logger.propagate = False
     
@@ -128,6 +141,27 @@ def setup_logging():
     
     # Prevent duplicate logs
     logger.propagate = False
+
+    # Attach trace context filter so request_id/user_id/agent_id appear in server logs
+    try:
+        from powermem.log_context import TraceContextFilter
+        _trace_filter = TraceContextFilter()
+        for h in logger.handlers:
+            h.addFilter(_trace_filter)
+        for uvicorn_logger in uvicorn_loggers:
+            for h in uvicorn_logger.handlers:
+                h.addFilter(_trace_filter)
+    except ImportError:
+        pass
+    except Exception as e:
+        print(f"Warning: Failed to attach TraceContextFilter: {e}", file=sys.stderr)
+
+    try:
+        from powermem.logging_config import setup_powermem_logging
+
+        setup_powermem_logging()
+    except Exception as e:
+        print(f"Warning: Failed to setup powermem SDK logging: {e}", file=sys.stderr)
 
 
 class JsonFormatter(logging.Formatter):
@@ -169,17 +203,46 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(log_data, ensure_ascii=False)
 
 
+_USER_PATH_RE = re.compile(r"/users/([^/]+)")
+_AGENT_PATH_RE = re.compile(r"/agents/([^/]+)")
+
+
 class LoggingMiddleware(BaseHTTPMiddleware):
     """Middleware for request/response logging"""
-    
+
+    @staticmethod
+    def _extract_trace_ids(request: Request) -> tuple:
+        user_id = request.query_params.get("user_id", "")
+        if not user_id:
+            m = _USER_PATH_RE.search(request.url.path)
+            if m:
+                user_id = m.group(1)
+
+        agent_id = request.query_params.get("agent_id", "")
+        if not agent_id:
+            m = _AGENT_PATH_RE.search(request.url.path)
+            if m:
+                agent_id = m.group(1)
+
+        return user_id or "", agent_id or ""
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Generate request ID
         request_id = str(uuid.uuid4())
         request.state.request_id = request_id
-        
+
+        # Propagate trace context to SDK logger tree
+        from powermem.log_context import set_log_context, reset_log_context
+        user_id, agent_id = self._extract_trace_ids(request)
+        tokens = set_log_context(
+            request_id=request_id,
+            user_id=user_id,
+            agent_id=agent_id,
+        )
+
         # Start time
         start_time = time.time()
-        
+
         # Log request
         logger.info(
             f"{request.method} {request.url.path}",
@@ -190,14 +253,14 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 "client": request.client.host if request.client else None,
             }
         )
-        
+
         try:
             # Process request
             response = await call_next(request)
-            
+
             # Calculate duration
             duration = time.time() - start_time
-            
+
             # Record metrics
             metrics_collector = get_metrics_collector()
             # Normalize path to endpoint
@@ -208,7 +271,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 status_code=response.status_code,
                 duration=duration
             )
-            
+
             # Log response
             logger.info(
                 f"{request.method} {request.url.path} - {response.status_code}",
@@ -218,24 +281,24 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                     "duration_ms": duration * 1000,
                 }
             )
-            
+
             # Add request ID to response header
             response.headers["X-Request-ID"] = request_id
-            
+
             return response
-            
+
         except Exception as e:
             duration = time.time() - start_time
-            
+
             # Determine status code and whether this is an expected error
             status_code = 500
             is_expected_error = False
-            
+
             if isinstance(e, APIError):
                 status_code = e.status_code
                 # Client errors (4xx) are expected, server errors (5xx) are unexpected
                 is_expected_error = status_code < 500
-            
+
             # Record metrics for error
             metrics_collector = get_metrics_collector()
             endpoint = metrics_collector.normalize_endpoint(request.url.path)
@@ -245,7 +308,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 status_code=status_code,
                 duration=duration
             )
-            
+
             # For expected errors (4xx), log without stack trace
             # For unexpected errors (5xx), log with full stack trace
             if is_expected_error:
@@ -270,6 +333,8 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                     exc_info=True,
                 )
             raise
+        finally:
+            reset_log_context(tokens)
 
 
 def log_request(request: Request, message: str, **kwargs):

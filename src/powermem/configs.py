@@ -9,14 +9,19 @@ from typing import Optional, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 
 from powermem.integrations.embeddings.config.base import BaseEmbedderConfig
-from powermem.integrations.embeddings.config.providers import OpenAIEmbeddingConfig
+from powermem.integrations.embeddings.config.providers import (
+    PyseekdbDefaultEmbeddingConfig,
+)
 from powermem.integrations.embeddings.config.sparse_base import BaseSparseEmbedderConfig
 import powermem.integrations.embeddings.config.sparse_providers  # noqa: F401 — ensures sparse provider registry is populated
 from powermem.integrations.llm.config.base import BaseLLMConfig
 from powermem.integrations.llm.config.qwen import QwenConfig
 from powermem.storage.config.base import BaseVectorStoreConfig, BaseGraphStoreConfig
-from powermem.storage.config.sqlite import SQLiteConfig
-from powermem.storage.config.oceanbase import OceanBaseGraphConfig
+from powermem.storage.config.sqlite import SQLiteConfig  # noqa: F401 — keeps SQLite provider registered
+from powermem.storage.config.oceanbase import (
+    OceanBaseConfig,
+    OceanBaseGraphConfig,  # noqa: F401 — keeps OceanBase graph provider registered
+)
 from powermem.integrations.rerank.config.base import BaseRerankConfig
 
 
@@ -32,12 +37,30 @@ class IntelligentMemoryConfig(BaseModel):
         description="Initial retention strength for new memories"
     )
     decay_rate: float = Field(
-        default=0.1,
-        description="Rate at which memories decay over time"
+        default=1.5,
+        description="Base memory decay strength; larger values decay slower"
+    )
+    decay_rate_multipliers: Dict[str, float] = Field(
+        default_factory=lambda: {
+            "working": 1,
+            "short_term": 7,
+            "long_term": 60,
+        },
+        description=(
+            "Per memory_type multiplier on base decay_rate. Larger multipliers "
+            "decay slower and should satisfy working < short_term < long_term."
+        ),
     )
     reinforcement_factor: float = Field(
         default=0.3,
         description="Factor by which memories are reinforced when accessed"
+    )
+    forgotten_score_multiplier: float = Field(
+        default=0.1,
+        description=(
+            "Multiplier applied to search ranking scores for memories "
+            "marked should_forget"
+        )
     )
     working_threshold: float = Field(
         default=0.3,
@@ -50,6 +73,14 @@ class IntelligentMemoryConfig(BaseModel):
     long_term_threshold: float = Field(
         default=0.8,
         description="Threshold for long-term memory classification"
+    )
+    review_adjustment_factor: float = Field(
+        default=0.3,
+        description="How strongly importance shortens review intervals (0-1 scale)",
+    )
+    review_interval_min_hours: float = Field(
+        default=0.5,
+        description="Minimum hours between scheduled reviews",
     )
     fallback_to_simple_add: bool = Field(
         default=False,
@@ -195,20 +226,49 @@ class QueryRewriteConfig(BaseModel):
     )
 
 
+class SkillStoreConfig(BaseModel):
+    """Configuration for skill sub-store."""
+    enabled: bool = Field(default=False, description="Enable skill storage")
+    collection_name: Optional[str] = Field(default=None, description="Table name; auto-generated if None")
+    similarity_threshold: float = Field(default=0.03, description="Dedup RRF score threshold")
+    index_type: Optional[str] = Field(default=None, description="Vector index type (hnsw, ivf, etc.). Falls back to vector_store.config.index_type if not set")
+
+
+class SourceStoreConfig(BaseModel):
+    """Configuration for source store (fact-source linking).
+
+    When enabled, a sources table is created alongside the memory table
+    so that each memory record can be linked back to its origin
+    (conversation, file upload, API call, etc.).
+    """
+    enabled: bool = Field(default=False, description="Enable source linking")
+    collection_name: Optional[str] = Field(default=None, description="Table name; auto-generated if None")
+
+
 class MemoryConfig(BaseModel):
     """Main memory configuration class."""
 
     vector_store: BaseVectorStoreConfig = Field(
-        description="Configuration for the vector store",
-        default_factory=SQLiteConfig,
+        description=(
+            "Configuration for the vector store. Defaults to the OceanBase "
+            "provider with an empty host, which boots embedded seekdb on "
+            "disk (no separate server) so PowerMem starts with zero ops; "
+            "set OCEANBASE_HOST to point at a remote OceanBase cluster, or "
+            "switch the provider to sqlite / postgres."
+        ),
+        default_factory=OceanBaseConfig,
     )
     llm: BaseLLMConfig = Field(
         description="Configuration for the language model",
         default_factory=QwenConfig,
     )
     embedder: BaseEmbedderConfig = Field(
-        description="Configuration for the embedding model",
-        default_factory=OpenAIEmbeddingConfig,
+        description=(
+            "Configuration for the embedding model. Defaults to the built-in local "
+            "all-MiniLM-L6-v2 model (384 dims) so PowerMem can start with zero "
+            "configuration; override to use OpenAI/Qwen/SiliconFlow/etc."
+        ),
+        default_factory=PyseekdbDefaultEmbeddingConfig,
     )
     graph_store: Optional[BaseGraphStoreConfig] = Field(
         description="Configuration for the graph store (None means disabled)",
@@ -264,6 +324,14 @@ class MemoryConfig(BaseModel):
     )
     query_rewrite: Optional[QueryRewriteConfig] = Field(
         description="Configuration for query rewrite module",
+        default=None,
+    )
+    skill_store: Optional[SkillStoreConfig] = Field(
+        description="Configuration for skill storage (None means disabled)",
+        default=None,
+    )
+    source_store: Optional[SourceStoreConfig] = Field(
+        description="Configuration for source store / fact-source linking (None means disabled)",
         default=None,
     )
 

@@ -35,7 +35,7 @@ class OceanBaseConfig(BaseVectorStoreConfig):
             "host",
             "OCEANBASE_HOST",
         ),
-        description="OceanBase server host (empty means embedded SeekDB mode)"
+        description="OceanBase server host (empty means embedded seekdb mode)"
     )
 
     ob_path: str = Field(
@@ -44,7 +44,7 @@ class OceanBaseConfig(BaseVectorStoreConfig):
             "ob_path",
             "OCEANBASE_PATH",
         ),
-        description="Path for embedded SeekDB data directory (used when host is empty)"
+        description="Path for embedded seekdb data directory (used when host is empty)"
     )
     
     port: str = Field(
@@ -96,6 +96,25 @@ class OceanBaseConfig(BaseVectorStoreConfig):
             "connection_args",
         ),
         description="OceanBase connection args"
+    )
+
+    # Connection pool parameters
+    pool_recycle: int = Field(
+        default=3600,
+        validation_alias=AliasChoices(
+            "pool_recycle",
+            "OCEANBASE_POOL_RECYCLE",
+        ),
+        description="SQLAlchemy pool_recycle in seconds (prevents stale connections)"
+    )
+
+    pool_pre_ping: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "pool_pre_ping",
+            "OCEANBASE_POOL_PRE_PING",
+        ),
+        description="SQLAlchemy pool_pre_ping (tests connections before use)"
     )
 
     # Vector index parameters

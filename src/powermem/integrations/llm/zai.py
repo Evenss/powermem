@@ -3,7 +3,9 @@ import logging
 import os
 from typing import Dict, List, Optional, Union
 
-from zai import ZhipuAiClient
+logger = logging.getLogger(__name__)
+
+from openai import OpenAI
 
 from powermem.integrations.llm import LLMBase
 from powermem.integrations.llm.config.base import BaseLLMConfig
@@ -51,9 +53,9 @@ class ZaiLLM(LLMBase):
 
         # Get API key from config or environment
         api_key = self.config.api_key or os.getenv("ZAI_API_KEY")
+        base_url = getattr(self.config, "zai_base_url", None) or os.getenv("ZAI_BASE_URL")
 
-        # Initialize Zhipu AI client
-        self.client = ZhipuAiClient(api_key=api_key)
+        self.client = OpenAI(api_key=api_key, base_url=base_url)
 
     def _parse_response(self, response, tools):
         """
@@ -79,7 +81,7 @@ class ZaiLLM(LLMBase):
 
                     # Check if arguments are empty or whitespace only
                     if not arguments_str or arguments_str.strip() == "":
-                        logging.warning(
+                        logger.warning(
                             f"Tool call '{tool_call.function.name}' has empty arguments. Skipping this tool call."
                         )
                         continue
@@ -88,7 +90,7 @@ class ZaiLLM(LLMBase):
                     try:
                         arguments = json.loads(arguments_str)
                     except json.JSONDecodeError as e:
-                        logging.error(
+                        logger.error(
                             f"Failed to parse tool call arguments for '{tool_call.function.name}': "
                             f"{arguments_str[:100]}... Error: {e}"
                         )
@@ -148,7 +150,7 @@ class ZaiLLM(LLMBase):
                 response_callback(self, response, params)
             except Exception as e:
                 # Log error but don't propagate
-                logging.error(f"Error due to callback: {e}")
+                logger.error(f"Error due to callback: {e}")
                 pass
 
         return parsed_response

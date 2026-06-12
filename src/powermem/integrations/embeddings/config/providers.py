@@ -1,10 +1,11 @@
 from typing import Any, Dict, Optional, Union
 
 import httpx
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 
 from powermem.integrations.embeddings.config.base import BaseEmbedderConfig
 from powermem.settings import settings_config
+from powermem.utils.headers import parse_default_headers
 
 
 class OpenAIEmbeddingConfig(BaseEmbedderConfig):
@@ -22,6 +23,15 @@ class OpenAIEmbeddingConfig(BaseEmbedderConfig):
             "OPEN_EMBEDDING_BASE_URL",
         ),
     )
+    default_headers: Optional[Dict[str, str]] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "default_headers",
+            "OPENAI_EMBEDDING_DEFAULT_HEADERS",
+            "EMBEDDING_DEFAULT_HEADERS",
+        ),
+        description="Extra default headers sent with OpenAI-compatible embedding requests",
+    )
     #: When False, omit the ``dimensions`` argument on ``embeddings.create`` (required for some
     #: OpenAI-compatible gateways that reject Matryoshka / output-dimension overrides).
     pass_dimensions: bool = Field(
@@ -31,6 +41,11 @@ class OpenAIEmbeddingConfig(BaseEmbedderConfig):
             "EMBEDDING_OPENAI_PASS_DIMENSIONS",
         ),
     )
+
+    @field_validator("default_headers", mode="before")
+    @classmethod
+    def _parse_default_headers(cls, value):
+        return parse_default_headers(value)
 
 
 class QwenEmbeddingConfig(BaseEmbedderConfig):
@@ -59,6 +74,10 @@ class QwenEmbeddingConfig(BaseEmbedderConfig):
     memory_add_embedding_type: Optional[str] = Field(default=None)
     memory_update_embedding_type: Optional[str] = Field(default=None)
     memory_search_embedding_type: Optional[str] = Field(default=None)
+    multimodal: Optional[bool] = Field(
+        default=None,
+        description="Explicitly set whether the model is multimodal. None=auto-detect from model name.",
+    )
 
 
 class SiliconFlowEmbeddingConfig(BaseEmbedderConfig):
@@ -124,6 +143,7 @@ class AzureOpenAIEmbeddingConfig(BaseEmbedderConfig):
     api_key: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices(
+            "api_key",
             "AZURE_OPENAI_API_KEY",
             "AZURE_API_KEY",
             "EMBEDDING_API_KEY",
@@ -131,15 +151,24 @@ class AzureOpenAIEmbeddingConfig(BaseEmbedderConfig):
     )
     azure_deployment: Optional[str] = Field(
         default=None,
-        validation_alias=AliasChoices("AZURE_DEPLOYMENT"),
+        validation_alias=AliasChoices(
+            "azure_deployment", "AZURE_DEPLOYMENT", "EMBEDDING_AZURE_DEPLOYMENT"
+        ),
     )
     azure_endpoint: Optional[str] = Field(
         default=None,
-        validation_alias=AliasChoices("AZURE_ENDPOINT", "AZURE_OPENAI_ENDPOINT"),
+        validation_alias=AliasChoices(
+            "azure_endpoint",
+            "AZURE_ENDPOINT",
+            "AZURE_OPENAI_ENDPOINT",
+            "EMBEDDING_AZURE_ENDPOINT",
+        ),
     )
     api_version: Optional[str] = Field(
         default=None,
-        validation_alias=AliasChoices("AZURE_API_VERSION"),
+        validation_alias=AliasChoices(
+            "api_version", "AZURE_API_VERSION", "EMBEDDING_API_VERSION"
+        ),
     )
     default_headers: Optional[Dict[str, str]] = Field(default=None)
     http_client_proxies: Optional[Union[Dict[str, Any], str]] = Field(default=None)
@@ -213,11 +242,54 @@ class LangchainEmbeddingConfig(BaseEmbedderConfig):
     model: Optional[Any] = Field(default=None)
 
 
+class OBMassEmbeddingConfig(BaseEmbedderConfig):
+    _provider_name = "ob_mass"
+    _class_path = "powermem.integrations.embeddings.ob_mass.OBMassEmbedding"
+
+    model_config = settings_config("EMBEDDING_", extra="forbid", env_file=None)
+
+    model: Optional[str] = Field(default=None)
+    openai_base_url: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "openai_base_url",
+            "OB_MASS_BASE_URL",
+        ),
+    )
+    project_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "project_id",
+            "OB_MASS_PROJECT_ID",
+        ),
+    )
+    request_id: Optional[str] = Field(default=None)
+
+
 class MockEmbeddingConfig(BaseEmbedderConfig):
     _provider_name = "mock"
     _class_path = "powermem.integrations.embeddings.mock.MockEmbeddings"
 
     model_config = settings_config("EMBEDDING_", extra="allow", env_file=None)
+
+
+class PyseekdbDefaultEmbeddingConfig(BaseEmbedderConfig):
+    """Built-in default embedder (all-MiniLM-L6-v2, 384 dims).
+
+    Requires no API key; runs locally via pyseekdb's ONNX-backed
+    ``DefaultEmbeddingFunction``. Selected automatically when no embedder is
+    configured, so PowerMem can start with zero configuration.
+    """
+
+    _provider_name = "default"
+    _class_path = (
+        "powermem.integrations.embeddings.pyseekdb_default.PyseekdbDefaultEmbedding"
+    )
+
+    model_config = settings_config("EMBEDDING_", extra="allow", env_file=None)
+
+    model: Optional[str] = Field(default="all-MiniLM-L6-v2")
+    embedding_dims: Optional[int] = Field(default=384)
 
 
 class CustomEmbeddingConfig(BaseEmbedderConfig):

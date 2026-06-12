@@ -38,7 +38,8 @@ class AnthropicLLM(LLMBase):
             self.config.model = "claude-3-5-sonnet-20240620"
 
         api_key = self.config.api_key or os.getenv("ANTHROPIC_API_KEY")
-        self.client = anthropic.Anthropic(api_key=api_key)
+        base_url = getattr(self.config, "anthropic_base_url", None) or os.getenv("ANTHROPIC_BASE_URL")
+        self.client = anthropic.Anthropic(api_key=api_key, base_url=base_url)
 
     def generate_response(
             self,
@@ -71,6 +72,9 @@ class AnthropicLLM(LLMBase):
                 filtered_messages.append(message)
 
         params = self._get_supported_params(messages=messages, **kwargs)
+        # Anthropic API rejects requests where both temperature and top_p are set.
+        # Keep temperature (more common); drop top_p.
+        params.pop("top_p", None)
         params.update(
             {
                 "model": self.config.model,

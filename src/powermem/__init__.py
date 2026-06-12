@@ -8,7 +8,10 @@ import importlib.metadata
 import warnings
 from typing import Any
 
-__version__ = importlib.metadata.version("powermem")
+try:
+    __version__ = importlib.metadata.version("powermem")
+except importlib.metadata.PackageNotFoundError:
+    __version__ = "0.0.0-dev"
 
 # Import core classes
 from .core.memory import Memory, _auto_convert_config
@@ -18,6 +21,10 @@ from .user_memory import UserMemory
 
 # Import configuration loader
 from .config_loader import load_config_from_env, create_config, validate_config, auto_config
+
+# Import intelligence modules
+from .intelligence.skill_manager import SkillManager
+from .configs import SkillStoreConfig
 
 
 def create_memory(
@@ -169,8 +176,9 @@ def from_config(config: Any = None, **kwargs):
                - **intelligent_memory** (Dict[str, Any], optional): Intelligent memory management configuration (Ebbinghaus algorithm)
                  - enabled (bool): Whether to enable intelligent memory (default: True)
                  - initial_retention (float): Initial retention strength for new memories (default: 1.0)
-                 - decay_rate (float): Rate at which memories decay over time (default: 0.1)
+                 - decay_rate (float): Memory decay strength; larger values decay slower (default: 1.5)
                  - reinforcement_factor (float): Factor by which memories are reinforced when accessed (default: 0.3)
+                 - forgotten_score_multiplier (float): Multiplier for memories marked should_forget in search ranking (default: 0.1)
                  - working_threshold (float): Threshold for working memory classification (default: 0.3)
                  - short_term_threshold (float): Threshold for short-term memory classification (default: 0.6)
                  - long_term_threshold (float): Threshold for long-term memory classification (default: 0.8)
@@ -255,7 +263,7 @@ def from_config(config: Any = None, **kwargs):
             },
             "intelligent_memory": {
                 "enabled": True,
-                "decay_rate": 0.1
+                "decay_rate": 1.5
             }
         })
         
@@ -286,7 +294,7 @@ Memory.from_config = classmethod(_deprecated_memory_from_config)
 
 __all__ = [
     "Memory",
-    "AsyncMemory", 
+    "AsyncMemory",
     "MemoryBase",
     "UserMemory",
     "load_config_from_env",
@@ -295,4 +303,6 @@ __all__ = [
     "create_memory",
     "from_config",
     "auto_config",
+    "SkillManager",
+    "SkillStoreConfig",
 ]

@@ -153,7 +153,7 @@ class AgentMemory:
             logger.info(f"AgentMemory initialized in {self.mode} mode")
             
         except Exception as e:
-            logger.error(f"Failed to initialize AgentMemory: {e}")
+            logger.error(f"Failed to initialize AgentMemory: {e}", exc_info=True)
             raise
     
     def _initialize_multi_agent(self) -> None:
@@ -242,12 +242,12 @@ class AgentMemory:
         
         return {
             'enabled': enabled,
-            'default_scope': default_scope,
+            'default_scope': default_scope.lower(),
             'default_privacy_level': default_privacy_level,
             'default_collaboration_level': default_collaboration_level,
             'default_access_permission': default_access_permission,
             'default_permissions': {
-                'owner': ['read', 'write', 'delete', 'admin'],
+                'owner': ['read', 'write', 'delete', 'share', 'admin'],
                 'collaborator': ['read', 'write'],
                 'viewer': ['read']
             },
@@ -271,8 +271,7 @@ class AgentMemory:
                 'max_collaborators': 5,
                 'collaboration_timeout': 3600,
                 'default_collaboration_level': default_collaboration_level.lower()
-            },
-            'default_scope': default_scope.lower()
+            }
         }
     
     def _get_default_multi_user_config(self) -> Dict[str, Any]:
@@ -306,7 +305,7 @@ class AgentMemory:
             'cross_user_sharing': True,
             'privacy_protection': True,
             'default_permissions': {
-                'owner': ['read', 'write', 'delete', 'admin'],
+                'owner': ['read', 'write', 'delete', 'share', 'admin'],
                 'collaborator': ['read', 'write'],
                 'viewer': ['read']
             },
@@ -416,7 +415,7 @@ class AgentMemory:
                 raise RuntimeError("No agent manager available for fallback")
                 
         except Exception as e:
-            logger.error(f"Failed to add memory: {e}")
+            logger.error(f"Failed to add memory: {e}", exc_info=True)
             raise
     
     def search(
@@ -425,7 +424,8 @@ class AgentMemory:
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         scope: Optional[str] = None,
-        limit: int = 10
+        limit: int = 10,
+        filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """
         Search memories.
@@ -435,6 +435,7 @@ class AgentMemory:
             user_id: Optional user ID filter
             agent_id: Optional agent ID filter
             scope: Optional scope filter
+            filters: Optional additional filters
             limit: Maximum number of results
             
         Returns:
@@ -444,18 +445,18 @@ class AgentMemory:
             raise RuntimeError("AgentMemory not initialized")
         
         try:
+            merged_filters = dict(filters or {})
+            if user_id:
+                merged_filters['user_id'] = user_id
+            if scope:
+                merged_filters['scope'] = scope
+
             # Use the underlying agent manager for search
             if hasattr(self._agent_manager, 'get_memories'):
-                filters = {}
-                if user_id:
-                    filters['user_id'] = user_id
-                if scope:
-                    filters['scope'] = scope
-                
                 results = self._agent_manager.get_memories(
                     agent_id=agent_id or 'default',
                     query=query,
-                    filters=filters
+                    filters=merged_filters
                 )
                 
                 return results[:limit]
@@ -466,20 +467,21 @@ class AgentMemory:
                     return self._agent_manager.get_memories(
                         agent_id=agent_id or 'default',
                         query=query,
-                        filters={'user_id': user_id} if user_id else None
+                        filters=merged_filters
                     )
                 else:
                     raise RuntimeError("Search not supported by current manager")
                 
         except Exception as e:
-            logger.error(f"Failed to search memories: {e}")
+            logger.error(f"Failed to search memories: {e}", exc_info=True)
             raise
     
     def get_all(
         self,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
-        limit: int = 100
+        limit: int = 100,
+        filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """
         Get all memories with optional filtering.
@@ -487,6 +489,7 @@ class AgentMemory:
         Args:
             user_id: Optional user ID filter
             agent_id: Optional agent ID filter
+            filters: Optional additional filters
             limit: Maximum number of results
             
         Returns:
@@ -496,15 +499,15 @@ class AgentMemory:
             raise RuntimeError("AgentMemory not initialized")
         
         try:
+            merged_filters = dict(filters or {})
+            if user_id:
+                merged_filters['user_id'] = user_id
+
             # Use the underlying agent manager
             if hasattr(self._agent_manager, 'get_memories'):
-                filters = {}
-                if user_id:
-                    filters['user_id'] = user_id
-                
                 results = self._agent_manager.get_memories(
                     agent_id=agent_id or 'default',
-                    filters=filters
+                    filters=merged_filters
                 )
                 
                 return results[:limit]
@@ -514,13 +517,13 @@ class AgentMemory:
                 if hasattr(self._agent_manager, 'get_memories'):
                     return self._agent_manager.get_memories(
                         agent_id=agent_id or 'default',
-                        filters={'user_id': user_id} if user_id else None
+                        filters=merged_filters
                     )
                 else:
                     raise RuntimeError("Get all not supported by current manager")
                 
         except Exception as e:
-            logger.error(f"Failed to get all memories: {e}")
+            logger.error(f"Failed to get all memories: {e}", exc_info=True)
             raise
     
     def update(
@@ -571,7 +574,7 @@ class AgentMemory:
                     raise RuntimeError("Update not supported by current manager")
                 
         except Exception as e:
-            logger.error(f"Failed to update memory {memory_id}: {e}")
+            logger.error(f"Failed to update memory {memory_id}: {e}", exc_info=True)
             raise
     
     def delete(
@@ -614,13 +617,14 @@ class AgentMemory:
                     raise RuntimeError("Delete not supported by current manager")
                 
         except Exception as e:
-            logger.error(f"Failed to delete memory {memory_id}: {e}")
+            logger.error(f"Failed to delete memory {memory_id}: {e}", exc_info=True)
             raise
     
     def delete_all(
         self,
         user_id: Optional[str] = None,
-        agent_id: Optional[str] = None
+        agent_id: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None
     ) -> bool:
         """
         Delete all memories matching the provided identifiers.
@@ -628,6 +632,7 @@ class AgentMemory:
         Args:
             user_id: Optional user ID filter
             agent_id: Optional agent ID (defaults to 'default' if not provided)
+            filters: Optional additional filters
             
         Returns:
             True if all deletions succeeded (or nothing to delete), False otherwise
@@ -640,9 +645,9 @@ class AgentMemory:
             if not hasattr(self._agent_manager, 'get_memories') or not hasattr(self._agent_manager, 'delete_memory'):
                 raise RuntimeError("Delete all not supported by current manager")
             
-            filters: Dict[str, Any] = {}
+            merged_filters: Dict[str, Any] = dict(filters or {})
             if user_id:
-                filters['user_id'] = user_id
+                merged_filters['user_id'] = user_id
             
             # Determine the agent_id to use for deletion
             # In multi_user mode, user_id should be used as agent_id for permission checks
@@ -652,7 +657,7 @@ class AgentMemory:
             # Fetch memories to delete
             results = self._agent_manager.get_memories(
                 agent_id=deletion_agent_id,
-                filters=filters
+                filters=merged_filters
             )
             
             if not results:
@@ -672,7 +677,7 @@ class AgentMemory:
             return all_ok
         
         except Exception as e:
-            logger.error(f"Failed to delete all memories: {e}")
+            logger.error(f"Failed to delete all memories: {e}", exc_info=True)
             raise
     
     def reset(self) -> None:
@@ -702,7 +707,7 @@ class AgentMemory:
                 else:
                     raise RuntimeError("Reset not supported by current manager - no memory instance or reset method available")
         except Exception as e:
-            logger.error(f"Failed to reset memory store: {e}")
+            logger.error(f"Failed to reset memory store: {e}", exc_info=True)
             raise
 
     # Agent-specific methods (for multi-agent mode)
@@ -793,7 +798,7 @@ class AgentMemory:
                 }
                 
         except Exception as e:
-            logger.error(f"Failed to get statistics: {e}")
+            logger.error(f"Failed to get statistics: {e}", exc_info=True)
             raise
     
     def get_mode(self) -> str:

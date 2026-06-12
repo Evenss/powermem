@@ -29,6 +29,7 @@ from .telemetry import TelemetryManager
 from .audit import AuditLogger
 from ..intelligence.memory_optimizer import MemoryOptimizer
 from ..intelligence.plugin import IntelligentMemoryPlugin, EbbinghausIntelligencePlugin
+from ..intelligence.skill_manager import SkillManager
 from ..utils.utils import (
     convert_config_object_to_dict,
     parse_vision_messages,
@@ -49,6 +50,400 @@ logger = logging.getLogger(__name__)
 
 # Global background thread pool for async memory operations
 _BACKGROUND_EXECUTOR = ThreadPoolExecutor(max_workers=3)
+
+
+def _forget_marker_updates() -> Dict[str, Any]:
+    return {
+        "should_forget": True,
+        "marked_for_forgetting_at": get_current_datetime().isoformat(),
+    }
+
+
+def _normalize_api_base_url(raw_url: Optional[str]) -> str:
+    base_url = (raw_url or "http://localhost:8848").rstrip("/")
+    if base_url.endswith("/api/v1"):
+        return base_url
+    return f"{base_url}/api/v1"
+
+
+def _looks_like_embedded_seekdb_lock_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return (
+        "opened by other process" in text
+        or "already opened" in text
+        or ("seekdb" in text and "lock" in text)
+        or ("open seekdb failed" in text and "ob_error(4000)" in text)
+    )
+
+
+def _is_embedded_oceanbase_config(
+    storage_type: str,
+    vector_store_config: Dict[str, Any],
+) -> bool:
+    if storage_type.lower() != "oceanbase":
+        return False
+    connection_args = vector_store_config.get("connection_args") or {}
+    host = vector_store_config.get("host") or connection_args.get("host")
+    return not str(host or "").strip()
+
+
+def _messages_to_content(messages: Any) -> str:
+    if isinstance(messages, str):
+        return messages
+    if isinstance(messages, dict):
+        return str(messages.get("content", ""))
+    if isinstance(messages, list):
+        parts: List[str] = []
+        for item in messages:
+            if isinstance(item, dict):
+                content = item.get("content")
+                if content is not None:
+                    parts.append(str(content))
+            elif item is not None:
+                parts.append(str(item))
+        return "\n".join(parts)
+    return str(messages)
+
+
+class _HTTPMemoryClient:
+    """SDK fallback for embedded seekdb when the API server owns the DB."""
+
+    def __init__(self, base_url: str, api_key: Optional[str] = None):
+        self.base_url = _normalize_api_base_url(base_url)
+        self.api_key = api_key
+
+    @property
+    def _headers(self) -> Dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
+        return headers
+
+    @classmethod
+    def from_env_if_healthy(cls) -> Optional["_HTTPMemoryClient"]:
+        base_url = (
+            os.getenv("POWERMEM_API_URL")
+            or os.getenv("POWERMEM_BASE_URL")
+            or "http://localhost:8848"
+        )
+        api_key = os.getenv("POWERMEM_API_KEY") or os.getenv("API_KEY")
+        client = cls(base_url=base_url, api_key=api_key)
+        try:
+            import httpx
+
+            response = httpx.get(f"{client.base_url}/system/health", timeout=2.0)
+            if response.status_code != 200:
+                return None
+            payload = response.json()
+            status = str(
+                payload.get("status")
+                or payload.get("data", {}).get("status")
+                or ""
+            ).lower()
+            if "healthy" not in status:
+                return None
+            return client
+        except Exception:
+            return None
+
+    def _request(self, method: str, path: str, **kwargs):
+        import httpx
+
+        response = httpx.request(
+            method,
+            f"{self.base_url}{path}",
+            headers=self._headers,
+            timeout=60.0,
+            **kwargs,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("success") is False:
+            raise RuntimeError(payload.get("message") or payload)
+        return payload.get("data")
+
+    @staticmethod
+    def _memory_response_to_result(item: Dict[str, Any]) -> Dict[str, Any]:
+        memory_id = item.get("memory_id") or item.get("id")
+        content = item.get("content") or item.get("memory") or ""
+        result = {
+            "id": memory_id,
+            "memory_id": memory_id,
+            "memory": content,
+            "event": item.get("event", "ADD"),
+            "user_id": item.get("user_id"),
+            "agent_id": item.get("agent_id"),
+            "run_id": item.get("run_id"),
+            "metadata": item.get("metadata") or {},
+            "created_at": item.get("created_at"),
+            "updated_at": item.get("updated_at"),
+        }
+        if "score" in item:
+            result["score"] = item.get("score")
+        return result
+
+    @staticmethod
+    def _metadata_matches_filters(
+        metadata: Dict[str, Any],
+        filters: Dict[str, Any],
+    ) -> bool:
+        if not filters:
+            return True
+        metadata = metadata or {}
+        for key, expected in filters.items():
+            actual = metadata.get(key)
+            if isinstance(expected, (list, tuple, set)):
+                if actual not in expected:
+                    return False
+            elif actual != expected:
+                return False
+        return True
+
+    @classmethod
+    def _memory_matches(
+        cls,
+        memory: Dict[str, Any],
+        run_id: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        if run_id is not None and memory.get("run_id") != run_id:
+            return False
+        if filters and not cls._metadata_matches_filters(
+            memory.get("metadata") or {},
+            filters,
+        ):
+            return False
+        return True
+
+    def add(
+        self,
+        messages,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        scope: Optional[str] = None,
+        memory_type: Optional[str] = None,
+        infer: bool = True,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        data = self._request(
+            "POST",
+            "/memories",
+            json={
+                "content": _messages_to_content(messages),
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "run_id": run_id,
+                "metadata": metadata,
+                "filters": filters,
+                "scope": scope,
+                "memory_type": memory_type,
+                "infer": infer,
+            },
+        )
+        items = data if isinstance(data, list) else ([data] if data else [])
+        return {"results": [self._memory_response_to_result(item) for item in items]}
+
+    def search(
+        self,
+        query: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        limit: int = 30,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        data = self._request(
+            "POST",
+            "/memories/search",
+            json={
+                "query": query,
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "run_id": run_id,
+                "filters": filters,
+                "limit": limit,
+            },
+        )
+        results = data.get("results", []) if isinstance(data, dict) else []
+        return {
+            "results": [self._memory_response_to_result(item) for item in results],
+            "relations": [],
+        }
+
+    def get(
+        self,
+        memory_id: int,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params = {"user_id": user_id, "agent_id": agent_id}
+        return self._request(
+            "GET",
+            f"/memories/{memory_id}",
+            params={k: v for k, v in params.items() if v is not None},
+        )
+
+    def get_all(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        limit: int = 100,
+        offset: int = 0,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        if run_id is not None or filters:
+            return self._get_all_with_client_side_filters(
+                user_id=user_id,
+                agent_id=agent_id,
+                run_id=run_id,
+                filters=filters,
+                limit=limit,
+                offset=offset,
+                sort_by=kwargs.get("sort_by"),
+                order=kwargs.get("order", "desc"),
+            )
+
+        params = {
+            "user_id": user_id,
+            "agent_id": agent_id,
+            "limit": limit,
+            "offset": offset,
+            "sort_by": kwargs.get("sort_by"),
+            "order": kwargs.get("order", "desc"),
+        }
+        data = self._request(
+            "GET",
+            "/memories",
+            params={k: v for k, v in params.items() if v is not None},
+        )
+        memories = data.get("memories", []) if isinstance(data, dict) else []
+        return {"results": memories, "relations": []}
+
+    def _get_all_with_client_side_filters(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        limit: int = 100,
+        offset: int = 0,
+        sort_by: Optional[str] = None,
+        order: str = "desc",
+    ) -> Dict[str, Any]:
+        matched: List[Dict[str, Any]] = []
+        api_offset = 0
+        page_size = 1000
+
+        while True:
+            params = {
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "limit": page_size,
+                "offset": api_offset,
+                "sort_by": sort_by,
+                "order": order,
+            }
+            data = self._request(
+                "GET",
+                "/memories",
+                params={k: v for k, v in params.items() if v is not None},
+            )
+            memories = data.get("memories", []) if isinstance(data, dict) else []
+            if not memories:
+                break
+
+            for memory in memories:
+                if self._memory_matches(memory, run_id=run_id, filters=filters):
+                    matched.append(memory)
+
+            total = data.get("total") if isinstance(data, dict) else None
+            api_offset += len(memories)
+            if len(memories) < page_size or (total is not None and api_offset >= total):
+                break
+            if len(matched) >= offset + limit:
+                break
+
+        return {"results": matched[offset:offset + limit], "relations": []}
+
+    def update(
+        self,
+        memory_id: int,
+        data: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        params = {"user_id": user_id, "agent_id": agent_id}
+        return self._request(
+            "PUT",
+            f"/memories/{memory_id}",
+            params={k: v for k, v in params.items() if v is not None},
+            json={"content": data, "metadata": metadata},
+        )
+
+    def delete(
+        self,
+        memory_id: int,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params = {"user_id": user_id, "agent_id": agent_id}
+        return self._request(
+            "DELETE",
+            f"/memories/{memory_id}",
+            params={k: v for k, v in params.items() if v is not None},
+        )
+
+    def delete_all(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        deleted_ids: List[Any] = []
+        deleted_count = 0
+
+        while True:
+            memories = self.get_all(
+                user_id=user_id,
+                agent_id=agent_id,
+                run_id=run_id,
+                limit=1000,
+            ).get("results", [])
+            ids = [
+                m.get("memory_id") or m.get("id")
+                for m in memories
+                if m.get("memory_id") or m.get("id")
+            ]
+            if not ids:
+                break
+
+            data = self._request(
+                "DELETE",
+                "/memories/batch",
+                json={
+                    "memory_ids": ids,
+                    "user_id": user_id,
+                    "agent_id": agent_id,
+                },
+            )
+            deleted_ids.extend(ids)
+            deleted_count += (data or {}).get("deleted_count", len(ids))
+
+            if len(ids) < 1000:
+                break
+
+        return {"deleted_count": deleted_count, "memory_ids": deleted_ids}
+
+    def reset(self) -> Dict[str, Any]:
+        return self.delete_all()
 
 
 def _auto_convert_config(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -156,6 +551,11 @@ class Memory(MemoryBase):
             })
             ```
         """
+        from powermem.logging_config import setup_powermem_logging
+
+        setup_powermem_logging()
+        self._http_client: Optional[_HTTPMemoryClient] = None
+
         # Handle MemoryConfig object or dict
 
         if isinstance(config, MemoryConfig):
@@ -221,7 +621,23 @@ class Memory(MemoryBase):
             vector_store_config['reranker'] = reranker
             logger.debug("Reranker passed to OceanBase vector store")
         
-        vector_store = VectorStoreFactory.create(self.storage_type, vector_store_config)
+        try:
+            vector_store = VectorStoreFactory.create(self.storage_type, vector_store_config)
+        except Exception as e:
+            if (
+                _is_embedded_oceanbase_config(self.storage_type, vector_store_config)
+                and _looks_like_embedded_seekdb_lock_error(e)
+            ):
+                http_client = _HTTPMemoryClient.from_env_if_healthy()
+                if http_client:
+                    self._http_client = http_client
+                    logger.info(
+                        "Embedded OceanBase is already opened by another process; "
+                        "using local PowerMem API fallback at %s",
+                        http_client.base_url,
+                    )
+                    return
+            raise
 
         # Extract graph_store config
         self.enable_graph = self._get_graph_enabled()
@@ -351,6 +767,17 @@ class Memory(MemoryBase):
 
         # Initialize sub stores
         self._init_sub_stores()
+
+        # Skill store (independent table)
+        self.skill_store = None
+        self._init_skill_store()
+
+        # Source store (fact-source linking)
+        self.source_store = None
+        self._init_source_store()
+
+        self.skill_manager = SkillManager(self.llm)
+        self.content_reviewer = None  # content review disabled without reviewer
 
         logger.info(f"Memory initialized with storage: {self.storage_type}, LLM: {self.llm_provider}, agent: {self.agent_id or 'default'}")
         self.telemetry.capture_event("memory.init", {"storage_type": self.storage_type, "llm_provider": self.llm_provider, "agent_id": self.agent_id})
@@ -618,12 +1045,36 @@ class Memory(MemoryBase):
                 - "relations" (Dict, optional): Graph relations if graph store is enabled, containing:
                     - "deleted_entities" (List): List of deleted graph entities
                     - "added_entities" (List): List of added graph entities
+
+        Note:
+            When ``source_store`` is enabled, the raw input is persisted as a
+            source record *before* fact extraction runs, and each extracted
+            memory is then linked back to that source. If extraction yields
+            no facts (or crashes), the source row remains with zero links --
+            this is intentional so raw material is preserved for debugging
+            and replay.
         """
         try:
+            if getattr(self, "_http_client", None):
+                return getattr(self, "_http_client", None).add(
+                    messages,
+                    user_id=user_id,
+                    agent_id=agent_id or self.agent_id,
+                    run_id=run_id,
+                    metadata=metadata,
+                    filters=filters,
+                    scope=scope,
+                    memory_type=memory_type,
+                    infer=infer,
+                )
+
             # Handle messages parameter
             if messages is None:
                 raise ValueError("messages must be provided (str, dict, or list[dict])")
-            
+
+            # Save original messages for source linking (before normalization)
+            original_messages = messages
+
             # Normalize input format
             if isinstance(messages, str):
                 messages = [{"role": "user", "content": messages}]
@@ -631,7 +1082,7 @@ class Memory(MemoryBase):
                 messages = [messages]
             elif not isinstance(messages, list):
                 raise ValueError("messages must be str, dict, or list[dict]")
-            
+
             # Vision-aware message processing
             llm_cfg = {}
             try:
@@ -642,19 +1093,36 @@ class Memory(MemoryBase):
                 messages = parse_vision_messages(messages, self.llm, llm_cfg.get("vision_details"), self.audio_llm)
             else:
                 messages = parse_vision_messages(messages, None, None, self.audio_llm)
+
+            if isinstance(messages, list) and len(messages) == 0:
+                return {"results": []}
             
             # Use self.agent_id as fallback if agent_id is not provided
             agent_id = agent_id or self.agent_id
-            
+
+            actor_id = (metadata or {}).get("actor_id") if isinstance(metadata, dict) else None
+            source_id = self._maybe_create_source(
+                original_messages,
+                user_id=user_id,
+                agent_id=agent_id,
+                run_id=run_id,
+                actor_id=actor_id,
+            )
+
             # Check if intelligent memory should be used
             use_infer = infer and isinstance(messages, list) and len(messages) > 0
-            
+
             # If not using intelligent memory, fall back to simple mode
             if not use_infer:
-                return self._simple_add(messages, user_id, agent_id, run_id, metadata, filters, scope, memory_type, prompt)
-            
-            # Intelligent memory mode: extract facts, search similar memories, and consolidate
-            return self._intelligent_add(messages, user_id, agent_id, run_id, metadata, filters, scope, memory_type, prompt)
+                result = self._simple_add(messages, user_id, agent_id, run_id, metadata, filters, scope, memory_type, prompt)
+            else:
+                # Intelligent memory mode: extract facts, search similar memories, and consolidate
+                result = self._intelligent_add(messages, user_id, agent_id, run_id, metadata, filters, scope, memory_type, prompt)
+
+            if source_id is not None:
+                self._link_result_to_source(source_id, result)
+
+            return result
             
         except Exception as e:
             logger.error(f"Failed to add memory: {e}")
@@ -1217,6 +1685,17 @@ class Memory(MemoryBase):
                 - "relations" (List, optional): Graph relations if graph store is enabled
         """
         try:
+            if getattr(self, "_http_client", None):
+                return getattr(self, "_http_client", None).search(
+                    query,
+                    user_id=user_id,
+                    agent_id=agent_id or self.agent_id,
+                    run_id=run_id,
+                    filters=filters,
+                    limit=limit,
+                    threshold=threshold,
+                )
+
             if not query or not query.strip():
                 return {
                     "results": [],
@@ -1251,7 +1730,7 @@ class Memory(MemoryBase):
             # Intelligent plugin lifecycle management on search
             if self._intelligence_plugin and self._intelligence_plugin.enabled:
                 updates, deletes = self._intelligence_plugin.on_search(processed_results)
-                # For embedded SeekDB the engine is single-threaded (NullPool, not
+                # For embedded seekdb the engine is single-threaded (NullPool, not
                 # thread-safe).  Background threads opening concurrent connections
                 # crash the C++ layer.  Run updates/deletes synchronously instead.
                 _is_embedded_store = (
@@ -1267,12 +1746,21 @@ class Memory(MemoryBase):
                             _BACKGROUND_EXECUTOR.submit(self.storage.update_memory, mem_id, {**upd}, user_id, agent_id)
                     logger.info(f"Submitted {len(updates)} update operations to background executor")
                 if deletes:
+                    # The plugin's "deletes" are memories that should be
+                    # forgotten by marking, not physically removed from storage.
                     for mem_id in deletes:
+                        forget_updates = _forget_marker_updates()
                         if _is_embedded_store:
-                            self.storage.delete_memory(mem_id, user_id, agent_id)
+                            self.storage.update_memory(mem_id, forget_updates, user_id, agent_id)
                         else:
-                            _BACKGROUND_EXECUTOR.submit(self.storage.delete_memory, mem_id, user_id, agent_id)
-                    logger.info(f"Submitted {len(deletes)} delete operations to background executor")
+                            _BACKGROUND_EXECUTOR.submit(
+                                self.storage.update_memory,
+                                mem_id,
+                                forget_updates,
+                                user_id,
+                                agent_id,
+                            )
+                    logger.info(f"Submitted {len(deletes)} forget marker update operations")
             
             # Transform results to match benchmark expected format
             # Benchmark expects: {"results": [{"memory": ..., "metadata": {...}, "score": ...}], "relations": [...]}
@@ -1391,6 +1879,12 @@ class Memory(MemoryBase):
                 Returns None if the memory is not found or access is denied.
         """
         try:
+            if getattr(self, "_http_client", None):
+                return getattr(self, "_http_client", None).get(
+                    memory_id,
+                    user_id=user_id,
+                    agent_id=agent_id or self.agent_id,
+                )
 
             result = self.storage.get_memory(memory_id, user_id, agent_id)
             
@@ -1404,8 +1898,7 @@ class Memory(MemoryBase):
                             
                             if updates is None:
                                 updates = {}
-                            updates["should_forget"] = True
-                            updates["marked_for_forgetting_at"] = get_current_datetime().isoformat()
+                            updates.update(_forget_marker_updates())
                         
                         if updates:
                             self.storage.update_memory(memory_id, {**updates}, user_id, agent_id)
@@ -1468,6 +1961,15 @@ class Memory(MemoryBase):
                 Returns None if the memory is not found or access is denied.
         """
         try:
+            if getattr(self, "_http_client", None):
+                return getattr(self, "_http_client", None).update(
+                    memory_id,
+                    data=content,
+                    user_id=user_id,
+                    agent_id=agent_id or self.agent_id,
+                    metadata=metadata,
+                )
+
             # Validate content is not empty
             if not content or not content.strip():
                 raise ValueError(f"Cannot update memory with empty content: '{content}'")
@@ -1545,6 +2047,13 @@ class Memory(MemoryBase):
     ) -> bool:
         """Delete a memory."""
         try:
+            if getattr(self, "_http_client", None):
+                getattr(self, "_http_client", None).delete(
+                    memory_id,
+                    user_id=user_id,
+                    agent_id=agent_id or self.agent_id,
+                )
+                return True
 
             result = self.storage.delete_memory(memory_id, user_id, agent_id)
             
@@ -1569,6 +2078,14 @@ class Memory(MemoryBase):
     ) -> bool:
         """Delete all memories for given identifiers."""
         try:
+            if getattr(self, "_http_client", None):
+                getattr(self, "_http_client", None).delete_all(
+                    user_id=user_id,
+                    agent_id=agent_id or self.agent_id,
+                    run_id=run_id,
+                )
+                return True
+
             result = self.storage.clear_memories(user_id, agent_id, run_id)
             
             if result:
@@ -1633,6 +2150,18 @@ class Memory(MemoryBase):
                 - "relations" (List[Dict], optional): Graph relations if graph store is enabled
         """
         try:
+            if getattr(self, "_http_client", None):
+                return getattr(self, "_http_client", None).get_all(
+                    user_id=user_id,
+                    agent_id=agent_id or self.agent_id,
+                    run_id=run_id,
+                    limit=limit,
+                    offset=offset,
+                    filters=filters,
+                    sort_by=sort_by,
+                    order=order,
+                )
+
             results = self.storage.get_all_memories(
                 user_id, agent_id, run_id, limit, offset,
                 sort_by=sort_by, order=order, filters=filters
@@ -1651,7 +2180,6 @@ class Memory(MemoryBase):
             if self.enable_graph:
                 filters = {**(filters or {}), "user_id": user_id, "agent_id": agent_id, "run_id": run_id}
                 graph_results = self.graph_store.get_all(filters, limit + offset)
-                results.extend(graph_results)
                 return {"results": results, "relations": graph_results}
 
             return {"results": results}
@@ -1680,7 +2208,7 @@ class Memory(MemoryBase):
         """
         try:
             count = self.storage.count_all_memories(
-                user_id, agent_id, run_id
+                user_id, agent_id, run_id, filters=filters
             )
             
             self.audit.log_event("memory.count_all", {
@@ -1834,6 +2362,10 @@ class Memory(MemoryBase):
         logger.warning("Resetting all memories")
         
         try:
+            if getattr(self, "_http_client", None):
+                getattr(self, "_http_client", None).reset()
+                return None
+
             # Reset vector store
             if hasattr(self.storage.vector_store, "reset"):
                 self.storage.vector_store.reset()
@@ -2176,3 +2708,410 @@ class Memory(MemoryBase):
                 failed += 1
         
         return {"success": success, "failed": failed}
+
+    # ============================================================
+    # Skill subsystem
+    # ============================================================
+
+    def _init_skill_store(self):
+        """Initialize skill store based on config (OceanBase only)."""
+        if self.storage_type.lower() != "oceanbase":
+            return
+
+        skill_cfg = self.config.get("skill_store") or {}
+        if isinstance(skill_cfg, dict):
+            enabled = skill_cfg.get("enabled", False)
+        else:
+            enabled = getattr(skill_cfg, "enabled", False)
+
+        if enabled:
+            try:
+                from ..storage.skill_store.oceanbase import OceanBaseSkillStore
+                main_collection = self.config.get("vector_store", {}).get("config", {}).get("collection_name", "memories")
+                table_name = (skill_cfg.get("collection_name") if isinstance(skill_cfg, dict) else getattr(skill_cfg, "collection_name", None)) or f"{main_collection}_skills"
+                embedding_dims = int(self.config.get("vector_store", {}).get("config", {}).get("embedding_model_dims", 1536))
+                # index_type: store-specific > vector_store.config > default "hnsw"
+                vs_index_type = self.config.get("vector_store", {}).get("config", {}).get("index_type", "hnsw").lower()
+                raw_index_type = skill_cfg.get("index_type") if isinstance(skill_cfg, dict) else getattr(skill_cfg, "index_type", None)
+                index_type = (raw_index_type.lower() if raw_index_type else None) or vs_index_type
+                fulltext_parser = self.config.get("vector_store", {}).get("config", {}).get("fulltext_parser", "ngram")
+                self.skill_store = OceanBaseSkillStore(
+                    engine=self.storage.vector_store.obvector.engine if hasattr(self.storage.vector_store, 'obvector') else None,
+                    table_name=table_name,
+                    embedding_dims=embedding_dims,
+                    fulltext_parser=fulltext_parser,
+                    index_type=index_type,
+                )
+                logger.info("SkillStore initialized: %s", table_name)
+            except Exception as e:
+                logger.warning("Failed to initialize SkillStore: %s", e)
+
+    def _init_source_store(self):
+        """Initialize source store for fact-source linking based on config."""
+        if self.storage_type.lower() != "oceanbase":
+            logger.debug(
+                "SourceStore disabled: storage_type=%s (only 'oceanbase' is supported)",
+                self.storage_type,
+            )
+            return
+
+        src_cfg = self.config.get("source_store") or {}
+        if isinstance(src_cfg, dict):
+            enabled = src_cfg.get("enabled", False)
+        else:
+            enabled = getattr(src_cfg, "enabled", False)
+
+        if not enabled:
+            return
+
+        # Reach into the vector store to reuse its SQLAlchemy engine. If the
+        # current storage backend isn't the OceanBase vector store (or its
+        # obvector handle hasn't been wired yet) we early-return instead of
+        # handing ``engine=None`` to OceanBaseSourceStore -- which would then
+        # crash during ``create_table()``.
+        engine = None
+        vector_store = getattr(self.storage, "vector_store", None)
+        obvector = getattr(vector_store, "obvector", None) if vector_store else None
+        if obvector is not None:
+            engine = getattr(obvector, "engine", None)
+        if engine is None:
+            logger.warning(
+                "SourceStore enabled but no OceanBase engine available; "
+                "skipping initialization (vector_store=%r)",
+                type(vector_store).__name__ if vector_store else None,
+            )
+            return
+
+        try:
+            from ..storage.source_store.oceanbase import OceanBaseSourceStore
+            main_collection = self.config.get("vector_store", {}).get("config", {}).get("collection_name", "memories")
+            table_name = (src_cfg.get("collection_name") if isinstance(src_cfg, dict) else getattr(src_cfg, "collection_name", None)) or f"{main_collection}_sources"
+            self.source_store = OceanBaseSourceStore(
+                engine=engine,
+                table_name=table_name,
+            )
+            logger.info("SourceStore initialized: %s", table_name)
+        except Exception as e:
+            logger.warning("Failed to initialize SourceStore: %s", e)
+
+    # ------------------------------------------------------------------ #
+    # Source linking (fact-source provenance)
+    # ------------------------------------------------------------------ #
+
+    @property
+    def source_store_enabled(self) -> bool:
+        """Whether the source store is configured and available."""
+        return self.source_store is not None
+
+    def _maybe_create_source(
+        self,
+        original_messages: Any,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        actor_id: Optional[str] = None,
+    ) -> Optional[int]:
+        """Create a source record from raw ``add()`` input, if source store is enabled.
+
+        The four scope IDs mirror the memory table's scope dimensions so that
+        sources created here can be queried / purged along the same axes as
+        the memories they spawn.
+
+        Returns the new ``source_id`` on success, or ``None`` when the source
+        store is disabled, the input is empty, or creation failed. Never
+        raises -- failures are swallowed with a warning so that ``add()``
+        itself stays unaffected by the source-linking side channel.
+        """
+        if not self.source_store_enabled or not original_messages:
+            return None
+        try:
+            if isinstance(original_messages, str):
+                source_type = "text"
+                source_content = original_messages
+            else:
+                source_type = "conversation"
+                source_content = json.dumps(original_messages, ensure_ascii=False, default=str)
+            source = self.create_source(
+                source_type=source_type,
+                content=source_content,
+                user_id=user_id,
+                agent_id=agent_id,
+                run_id=run_id,
+                actor_id=actor_id,
+            )
+            if not source:
+                return None
+            # ``source`` may be a dict (normal path) or -- for misbehaving
+            # backends -- any object; guard against both to keep the warning
+            # message informative instead of "'X' has no attribute 'get'".
+            if isinstance(source, dict):
+                return source.get("id")
+            return getattr(source, "id", None)
+        except Exception as e:
+            preview = str(original_messages)[:200]
+            logger.warning(
+                "Failed to create source during add: %s (input preview: %r)",
+                e, preview,
+            )
+            return None
+
+    def _link_result_to_source(self, source_id: int, result: Any) -> None:
+        """Link every memory record in an ``add()`` result to the given source.
+
+        Swallows per-link failures with a warning so a transient link error
+        never breaks the enclosing ``add()`` call.
+        """
+        result_list = result.get("results", []) if isinstance(result, dict) else []
+        for mem in result_list:
+            mem_id = mem.get("id") if isinstance(mem, dict) else getattr(mem, "id", None)
+            if mem_id is None:
+                continue
+            try:
+                self.link_memory_to_source(source_id, mem_id)
+            except Exception as e:
+                logger.warning(
+                    "Failed to link memory %s to source %s: %s",
+                    mem_id, source_id, e,
+                )
+
+    def create_source(
+        self,
+        source_type: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        actor_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Create a source record. Returns ``None`` when source_store is disabled.
+
+        Scope IDs (``user_id`` / ``agent_id`` / ``run_id`` / ``actor_id``)
+        are persisted on the source row so that provenance queries can be
+        scoped the same way as the main memory table.
+        """
+        if self.source_store is None:
+            return None
+        return self.source_store.create_source(
+            source_type=source_type,
+            content=content,
+            metadata=metadata,
+            user_id=user_id,
+            agent_id=agent_id,
+            run_id=run_id,
+            actor_id=actor_id,
+        )
+
+    def get_source(self, source_id: int) -> Optional[Dict[str, Any]]:
+        """Get a source by ID. Returns ``None`` when source_store is disabled."""
+        if self.source_store is None:
+            return None
+        return self.source_store.get_source(source_id)
+
+    def link_memory_to_source(self, source_id: int, memory_id: int) -> Optional[bool]:
+        """Link a memory record to a source.
+
+        Returns:
+            - ``None``  -- source store is not enabled.
+            - ``True``  -- a new link row was inserted by this call.
+            - ``False`` -- the link already existed (idempotent retry /
+              duplicate dispatch); the store logs this at info level.
+        """
+        if self.source_store is None:
+            return None
+        return self.source_store.link_memory(source_id, memory_id)
+
+    def get_sources_for_memory(self, memory_id: int) -> Optional[List[Dict[str, Any]]]:
+        """Return all sources linked to a memory. Returns ``None`` when disabled."""
+        if self.source_store is None:
+            return None
+        return self.source_store.get_sources_for_memory(memory_id)
+
+    def delete_source(self, source_id: int) -> Optional[bool]:
+        """Delete a source record and its links. Returns ``None`` when disabled."""
+        if self.source_store is None:
+            return None
+        return self.source_store.delete_source(source_id)
+
+    def unlink_memory_from_source(
+        self, source_id: int, memory_id: int
+    ) -> Optional[bool]:
+        """Remove the link between a source and a memory.
+
+        Named symmetrically with :meth:`link_memory_to_source` rather than
+        just ``unlink_memory`` -- on ``Memory`` the short form reads like
+        "delete a memory", which is the wrong mental model.
+
+        Returns:
+            - ``None``  -- source store is not enabled.
+            - ``True``  -- a link row was removed.
+            - ``False`` -- no matching link existed.
+        """
+        if self.source_store is None:
+            return None
+        return self.source_store.unlink_memory(source_id, memory_id)
+
+    # ------------------------------------------------------------------ #
+    # Skill <-> source linking
+    # ------------------------------------------------------------------ #
+
+    def link_skill_to_source(self, source_id: int, skill_id: int) -> Optional[bool]:
+        """Link a skill record to a source. ``None`` when disabled."""
+        if self.source_store is None:
+            return None
+        return self.source_store.link_skill(source_id, skill_id)
+
+    def unlink_skill_from_source(self, source_id: int, skill_id: int) -> Optional[bool]:
+        """Unlink a skill from a source. ``None`` when disabled."""
+        if self.source_store is None:
+            return None
+        return self.source_store.unlink_skill(source_id, skill_id)
+
+    def get_sources_for_skill(self, skill_id: int) -> Optional[List[Dict[str, Any]]]:
+        """Return all sources linked to a skill. ``None`` when disabled."""
+        if self.source_store is None:
+            return None
+        return self.source_store.get_sources_for_skill(skill_id)
+
+    # ------------------------------------------------------------------ #
+    # Reverse queries (source -> targets)
+    # ------------------------------------------------------------------ #
+
+    def get_memories_for_source(self, source_id: int) -> Optional[List[int]]:
+        """List memory IDs linked to a source. ``None`` when disabled."""
+        if self.source_store is None:
+            return None
+        return self.source_store.get_memories_for_source(source_id)
+
+    def get_skills_for_source(self, source_id: int) -> Optional[List[int]]:
+        """List skill IDs linked to a source. ``None`` when disabled."""
+        if self.source_store is None:
+            return None
+        return self.source_store.get_skills_for_source(source_id)
+
+    def distill_skills(
+        self,
+        messages: List[Dict[str, str]],
+        today: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Extract reusable procedural skills from a conversation.
+
+        Returns:
+            List of ``{"title": str, "description": str, "tags": list,
+                        "procedure": {"prerequisites": list, "steps": list, "pitfalls": list}}``.
+        """
+        if today is None:
+            today = datetime.now().strftime("%Y-%m-%d")
+        return self.skill_manager.distill(messages, today)
+
+    def merge_skills(self, existing: str, new: str) -> Dict[str, Any]:
+        """Judge whether two skills should be merged or kept separate.
+
+        Returns:
+            ``{"action": "merge", "title": str, "description": str, "procedure": dict}``
+            or ``{"action": "skip"}``.
+        """
+        return self.skill_manager.merge(existing, new)
+
+    def add_skill(
+        self, title: str, description: str,
+        tags: Optional[List[str]] = None,
+        procedure: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        skip_review: bool = False,
+        title_embedding: Optional[List[float]] = None,
+        description_embedding: Optional[List[float]] = None,
+    ) -> Dict[str, Any]:
+        """Store a skill with dedup + optional content review.
+
+        Returns: {"id", "title", "action": "created"|"merged"|"blocked"}
+        """
+        if not self.skill_store:
+            raise RuntimeError("SkillStore not enabled. Set skill_store.enabled=True in config.")
+
+        if not skip_review:
+            safe, reason = self.review_content(title, description, tags)
+            if not safe:
+                return {"title": title, "action": "blocked", "reason": reason}
+
+        title_emb = title_embedding if title_embedding is not None else self.embedding.embed(title)
+        desc_emb = description_embedding if description_embedding is not None else self.embedding.embed(description)
+
+        similar = self.skill_store.search(
+            query_embedding=title_emb, query_text=title,
+            limit=1, user_id=user_id, agent_id=agent_id,
+        )
+        threshold = (self.config.get("skill_store") or {}).get("similarity_threshold", 0.03) if isinstance(self.config.get("skill_store"), dict) else 0.03
+
+        if similar and similar[0].get("score", 0) > threshold:
+            existing = similar[0]
+            import json as _json
+            existing_text = f"{existing['title']}\n{existing['description']}\nprocedure: {_json.dumps(existing.get('procedure_data', {}), ensure_ascii=False)}"
+            new_text = f"{title}\n{description}\nprocedure: {_json.dumps(procedure or {}, ensure_ascii=False)}"
+            merge_result = self.skill_manager.merge(existing_text, new_text)
+
+            if merge_result.get("action") == "merge":
+                merged_title = merge_result.get("title") or title
+                merged_desc = merge_result.get("description") or description
+                merged_proc = merge_result.get("procedure") or procedure
+                merged_tags = list(set((tags or []) + (existing.get("tags") or [])))
+                merged_title_emb = self.embedding.embed(merged_title)
+                merged_desc_emb = self.embedding.embed(merged_desc)
+                self.skill_store.update(
+                    existing["id"], merged_title, merged_desc,
+                    tags=merged_tags, procedure_data=merged_proc,
+                    title_embedding=merged_title_emb, description_embedding=merged_desc_emb,
+                )
+                return {"id": existing["id"], "title": merged_title, "action": "merged"}
+
+        result = self.skill_store.add(
+            title=title, description=description, tags=tags, procedure_data=procedure,
+            title_embedding=title_emb, description_embedding=desc_emb,
+            user_id=user_id, agent_id=agent_id,
+        )
+        return {"id": result["id"], "title": title, "action": "created"}
+
+    def search_skills(
+        self, query: str, limit: int = 10,
+        user_id: Optional[str] = None, agent_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Search skills by embedding + fulltext."""
+        if not self.skill_store:
+            return []
+        query_emb = self.embedding.embed(query)
+        return self.skill_store.search(
+            query_embedding=query_emb, query_text=query,
+            limit=limit, user_id=user_id, agent_id=agent_id,
+        )
+
+    def get_skill(self, skill_id: int) -> Optional[Dict[str, Any]]:
+        """Get a single skill by ID."""
+        if not self.skill_store:
+            return None
+        return self.skill_store.get(skill_id)
+
+    def update_skill_status(self, skill_id: int, status: str) -> Optional[bool]:
+        """Update the status of a skill.
+
+        Returns None if the skill store is disabled, True if the row was
+        updated, False if no row matched.
+        """
+        if not self.skill_store:
+            return None
+        return self.skill_store.update_status(skill_id, status)
+
+    def review_content(
+        self,
+        title: str,
+        description: str,
+        tags: Optional[List[str]] = None,
+    ) -> tuple:
+        """Run content safety review if a reviewer is configured.
+
+        Returns:
+            ``(safe: bool, reason: Optional[str])``. Always ``(True, None)`` if no reviewer.
+        """
+        if self.content_reviewer is None:
+            return True, None
+        return self.content_reviewer.review(title, description, tags)

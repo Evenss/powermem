@@ -383,6 +383,7 @@ OpenAI GPT models are supported.
 | `LLM_API_KEY` | string | Yes* | - | OpenAI API key. Required when `LLM_PROVIDER=openai` |
 | `LLM_MODEL` | string | No | `gpt-4` | OpenAI model name. Options: `gpt-4`, `gpt-4-turbo`, `gpt-3.5-turbo`, etc. |
 | `OPENAI_LLM_BASE_URL` | string | No | `https://api.openai.com/v1` | API base URL for OpenAI |
+| `OPENAI_LLM_DEFAULT_HEADERS` | JSON/string | No | - | Extra default HTTP headers for OpenAI-compatible gateways. JSON object is recommended for multiple headers. |
 | `LLM_TEMPERATURE` | float | No | `0.7` | Sampling temperature (0.0-2.0) |
 | `LLM_MAX_TOKENS` | integer | No | `1000` | Maximum number of tokens to generate |
 | `LLM_TOP_P` | float | No | `1.0` | Nucleus sampling parameter (0.0-1.0) |
@@ -393,6 +394,7 @@ LLM_PROVIDER=openai
 LLM_API_KEY=your-openai-api-key
 LLM_MODEL=gpt-4
 OPENAI_LLM_BASE_URL=https://api.openai.com/v1
+OPENAI_LLM_DEFAULT_HEADERS={"X-Custom-Header":"your-value"}
 LLM_TEMPERATURE=0.7
 LLM_MAX_TOKENS=1000
 LLM_TOP_P=1.0
@@ -407,6 +409,7 @@ LLM_TOP_P=1.0
       "api_key": "your-openai-api-key",
       "model": "gpt-4",
       "openai_base_url": "https://api.openai.com/v1",
+      "default_headers": {"X-Custom-Header": "your-value"},
       "temperature": 0.7,
       "max_tokens": 1000,
       "top_p": 1.0
@@ -502,6 +505,7 @@ OpenAI provides text embedding models.
 | `EMBEDDING_MODEL` | string | No | `text-embedding-ada-002` | OpenAI embedding model name. Options: `text-embedding-ada-002`, `text-embedding-3-small`, `text-embedding-3-large` |
 | `EMBEDDING_DIMS` | integer | Yes* | `1536` | Vector dimensions. Varies by model (ada-002: 1536, 3-small: 1536, 3-large: 3072). Required when `EMBEDDING_PROVIDER=openai` |
 | `OPEN_EMBEDDING_BASE_URL` | string | No | `https://api.openai.com/v1` | API base URL for OpenAI |
+| `OPENAI_EMBEDDING_DEFAULT_HEADERS` | JSON/string | No | - | Extra default HTTP headers for OpenAI-compatible embedding gateways. JSON object is recommended for multiple headers. |
 
 **Environment Variables Example:**
 ```env
@@ -510,6 +514,7 @@ EMBEDDING_API_KEY=your-openai-api-key
 EMBEDDING_MODEL=text-embedding-ada-002
 EMBEDDING_DIMS=1536
 OPEN_EMBEDDING_BASE_URL=https://api.openai.com/v1
+OPENAI_EMBEDDING_DEFAULT_HEADERS={"X-Custom-Header":"your-value"}
 ```
 
 **JSON Configuration Example:**
@@ -605,7 +610,7 @@ Intelligent memory uses the Ebbinghaus forgetting curve to manage memory retenti
 |--------------|------|----------|---------|-------------|
 | `INTELLIGENT_MEMORY_ENABLED` | boolean | No | `true` | Enable intelligent memory management |
 | `INTELLIGENT_MEMORY_INITIAL_RETENTION` | float | No | `1.0` | Initial retention score (0.0-1.0). Starting memory strength |
-| `INTELLIGENT_MEMORY_DECAY_RATE` | float | No | `0.1` | Memory decay rate (0.0-1.0). Higher values mean faster forgetting |
+| `INTELLIGENT_MEMORY_DECAY_RATE` | float | No | `1.5` | Memory decay strength (S in `R=e^(-t/24S)`). Larger values mean slower decay |
 | `INTELLIGENT_MEMORY_REINFORCEMENT_FACTOR` | float | No | `0.3` | Reinforcement factor (0.0-1.0). How much memory strengthens when accessed |
 | `INTELLIGENT_MEMORY_WORKING_THRESHOLD` | float | No | `0.3` | Working memory threshold (0.0-1.0). Memories below this are in working memory |
 | `INTELLIGENT_MEMORY_SHORT_TERM_THRESHOLD` | float | No | `0.6` | Short-term memory threshold (0.0-1.0). Memories between working and this are short-term |
@@ -643,7 +648,7 @@ MEMORY_DECAY_REINFORCEMENT_FACTOR=0.3
   "intelligent_memory": {
     "enabled": true,
     "initial_retention": 1.0,
-    "decay_rate": 0.1,
+    "decay_rate": 1.5,
     "reinforcement_factor": 0.3,
     "working_threshold": 0.3,
     "short_term_threshold": 0.6,
@@ -658,7 +663,7 @@ config = {
     'intelligent_memory': {
         'enabled': True,
         'initial_retention': 1.0,
-        'decay_rate': 0.1,
+        'decay_rate': 1.5,
         'reinforcement_factor': 0.3,
         'working_threshold': 0.3,
         'short_term_threshold': 0.6,
@@ -1046,7 +1051,7 @@ AUDIT_ENABLED=true
   "intelligent_memory": {
     "enabled": true,
     "initial_retention": 1.0,
-    "decay_rate": 0.1,
+    "decay_rate": 1.5,
     "reinforcement_factor": 0.3
   },
   "audit": {
@@ -1094,7 +1099,7 @@ config = {
     'intelligent_memory': {
         'enabled': True,
         'initial_retention': 1.0,
-        'decay_rate': 0.1,
+        'decay_rate': 1.5,
         'reinforcement_factor': 0.3
     },
     'audit': {
@@ -1154,7 +1159,7 @@ Here's a complete JSON configuration file example (`config.json`) with all optio
   "intelligent_memory": {
     "enabled": true,
     "initial_retention": 1.0,
-    "decay_rate": 0.1,
+    "decay_rate": 1.5,
     "reinforcement_factor": 0.3,
     "working_threshold": 0.3,
     "short_term_threshold": 0.6,

@@ -7,6 +7,7 @@ This module provides CLI commands for configuration management:
 - test: Test configuration connectivity
 """
 
+import logging
 import click
 import sys
 import os
@@ -22,6 +23,8 @@ from ..utils.output import (
     print_warning,
     print_info,
 )
+
+logger = logging.getLogger(__name__)
 from ..utils.envfile import read_env_file, update_env_file
 
 
@@ -215,8 +218,7 @@ def show_cmd(ctx: CLIContext, section, show_secrets, json_output):
     except Exception as e:
         print_error(f"Failed to show configuration: {e}")
         if ctx.verbose:
-            import traceback
-            traceback.print_exc()
+            logger.exception("CLI command failed")
         sys.exit(1)
 
 
@@ -446,8 +448,7 @@ def validate_cmd(ctx: CLIContext, env_file, strict, json_output, check_connectiv
     except Exception as e:
         print_error(f"Validation failed: {e}")
         if ctx.verbose:
-            import traceback
-            traceback.print_exc()
+            logger.exception("CLI command failed")
         sys.exit(1)
 
 
@@ -732,7 +733,7 @@ def _config_from_env_file(
 
     result = {}
     for section_key, _ in _ENV_SECTION_PREFIXES:
-        if sections[section_key]:
+        if section_filter is None or sections[section_key]:
             result[section_key] = sections[section_key]
     if section_filter is not None:
         result = {section_filter: result.get(section_filter, {})}
@@ -829,12 +830,12 @@ def _wizard_database(existing: Dict[str, str]) -> Dict[str, str]:
 
     if provider == "oceanbase":
         updates["OCEANBASE_HOST"] = click.prompt(
-            "OceanBase host (empty for embedded SeekDB)",
+            "OceanBase host (empty for embedded seekdb)",
             default=existing.get("OCEANBASE_HOST") or "",
             show_default=True,
         )
         updates["OCEANBASE_PATH"] = click.prompt(
-            "OceanBase embedded SeekDB path (used when host is empty)",
+            "OceanBase embedded seekdb path (used when host is empty)",
             default=existing.get("OCEANBASE_PATH") or "./seekdb_data",
             show_default=True,
         )
@@ -923,12 +924,12 @@ def _wizard_database_quickstart(existing: Dict[str, str]) -> Dict[str, str]:
 
     if provider == "oceanbase":
         updates["OCEANBASE_HOST"] = click.prompt(
-            "OceanBase host (empty for embedded SeekDB)",
+            "OceanBase host (empty for embedded seekdb)",
             default=existing.get("OCEANBASE_HOST") or "",
             show_default=True,
         )
         updates["OCEANBASE_PATH"] = click.prompt(
-            "OceanBase embedded SeekDB path (used when host is empty)",
+            "OceanBase embedded seekdb path (used when host is empty)",
             default=existing.get("OCEANBASE_PATH") or "./seekdb_data",
             show_default=True,
         )
