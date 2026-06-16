@@ -7,18 +7,15 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 
 PYTHON=${1:-}
 if [ -z "$PYTHON" ]; then
-  if [ -x "$(venv_python)" ]; then
-    PYTHON=$(venv_python)
-  else
-    PYTHON=$(choose_python)
-  fi
+  PYTHON=$(choose_python)
 fi
 
-echo "Preloading all-MiniLM-L6-v2 with Python: $PYTHON ($(python_version "$PYTHON"))"
+MODELSCOPE_PACKAGE=${POWERMEM_MODELSCOPE_PACKAGE:-modelscope}
 
-"$PYTHON" -m pip install -q modelscope
+echo "Preloading all-MiniLM-L6-v2 with uvx package: $MODELSCOPE_PACKAGE"
+echo "uvx Python: $PYTHON ($(python_version "$PYTHON"))"
 
-"$PYTHON" - <<'PY'
+uvx_run --python "$PYTHON" --from "$MODELSCOPE_PACKAGE" python - <<'PY'
 import json
 import os
 import shutil
@@ -63,4 +60,3 @@ for name in os.listdir(src):
 print("ModelScope download and HuggingFace cache bridge complete.")
 print(f"HF cache snapshot: {snap}")
 PY
-

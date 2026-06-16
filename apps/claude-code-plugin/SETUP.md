@@ -26,76 +26,104 @@ do not run `claude plugin install`, and do not build the dashboard. The plugin i
 already installed; this section only prepares the PowerMem backend that the plugin
 connects to.
 
-Installed-plugin init creates a plugin-local Python environment and installs the
-backend package with `pip install powermem` by default. Therefore the PyPI release
-used by this flow must already contain the backend capabilities required by the
-plugin, including the local embedding dependencies. If the user is validating a
-plugin change that depends on unpublished backend code, use
-`POWERMEM_INIT_PACKAGE` to install that exact Git branch or commit instead of the
-PyPI package.
+Installed-plugin init ensures `uv` is available, then starts the backend with the
+uvx-style launcher `uvx --from 'powermem[server,seekdb]' powermem-server`. It does
+not create a plugin-local venv. Therefore the PyPI release used by this flow must
+already contain the backend capabilities required by the plugin, including the
+local embedding dependencies. If the user is validating a plugin change that
+depends on unpublished backend code, use `POWERMEM_INIT_PACKAGE` to pass that
+exact Git branch or commit to `uvx --from` instead of the PyPI package.
 
 Installed-plugin init is idempotent and uses plugin-local state:
 
 ```text
-${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/memory-powermem-powermem}/
+$HOME/.powermem/
   .env
   runtime.env
-  server.pid
+  powermem.pid
   powermem-server.log
-  venv/
+  seekdb_data/
 ```
 
 Follow these steps:
 
+**Always use a two-step invocation: discover or reuse `CLAUDE_PLUGIN_ROOT`
+first, then run the script.** Never write `VAR=val sh "$VAR/..."` on one line —
+the shell expands `$VAR` before the assignment, producing an empty path.
+
+```bash
+# If CLAUDE_PLUGIN_ROOT is not already set, find the plugin root:
+if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  export CLAUDE_PLUGIN_ROOT=$(find ~/.claude/plugins/cache/powermem/memory-powermem -maxdepth 2 -name scripts -type d 2>/dev/null | head -1 | xargs dirname)
+fi
+sh "$CLAUDE_PLUGIN_ROOT/scripts/..."
+```
+
 1. If the skill was just installed or updated, ask the user to run `/reload-plugins`
    first, then retry `/memory-powermem:init`.
 2. Run `sh "$CLAUDE_PLUGIN_ROOT/scripts/status.sh"` and inspect whether config,
-   venv, managed PID, Python versions, and health are present.
+   uv, managed PID, Python versions, and health are present.
 3. If `.env` is missing, run init with auto-detection first:
 
    ```bash
    sh "$CLAUDE_PLUGIN_ROOT/scripts/init.sh"
    ```
 
-   The script reads `~/.claude/settings.json` and attempts to derive:
-   `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, and provider base URL. It writes only
-   the plugin-local `.env`.
+   The script reads the current process environment first and attempts to derive
+   the supported Anthropic configuration. It uses `ANTHROPIC_API_KEY` first; only
+   when that is absent does it use `ANTHROPIC_AUTH_TOKEN` together with
+   `ANTHROPIC_BASE_URL`. It also reads `ANTHROPIC_MODEL` from the environment.
+   If the environment does not provide a complete config, it falls back to
+   `~/.claude/settings.json` using the same Anthropic keys. It writes the
+   plugin-local `.env` with the full PowerMem backend defaults: embedded
+   OceanBase/seekdb storage, local default embedding, server settings, and logging
+   settings.
 4. If init reports missing values, ask the user only for those missing values. Do
    not invent credentials. Re-run init with the matching environment variables:
 
    ```bash
    POWERMEM_INIT_LLM_PROVIDER=anthropic \
-   POWERMEM_INIT_LLM_MODEL=claude-sonnet-4-6 \
+   POWERMEM_INIT_LLM_MODEL=anthropic/claude-sonnet-4.6 \
    POWERMEM_INIT_LLM_API_KEY=... \
+   sh "$CLAUDE_PLUGIN_ROOT/scripts/init.sh"
+   ```
+
+   For a bearer-token gateway, use:
+
+   ```bash
+   POWERMEM_INIT_LLM_PROVIDER=anthropic \
+   POWERMEM_INIT_LLM_MODEL=anthropic/claude-sonnet-4.6 \
+   POWERMEM_INIT_LLM_AUTH_TOKEN=... \
+   POWERMEM_INIT_LLM_BASE_URL=https://your-gateway.example.com \
    sh "$CLAUDE_PLUGIN_ROOT/scripts/init.sh"
    ```
 
    Optional variables:
    - `POWERMEM_INIT_LLM_BASE_URL` for a custom provider gateway.
-   - `POWERMEM_INIT_PACKAGE` to test unpublished backend code instead of PyPI
-     `powermem`, for example
-     `powermem @ git+https://github.com/oceanbase/powermem.git@<branch-or-sha>`.
+   - `POWERMEM_INIT_PACKAGE` to test unpublished backend code through
+     `uvx --from` instead of PyPI `powermem`, for example
+     `powermem[server,seekdb] @ git+https://github.com/oceanbase/powermem.git@<branch-or-sha>`.
    - `POWERMEM_INIT_PYTHON` to force a specific Python >= 3.11.
    - `POWERMEM_INIT_PORT` to force the managed server port.
    - `POWERMEM_INIT_PRELOAD_MODEL=1` to pre-download the default local
      `all-MiniLM-L6-v2` embedding model before starting the server.
-5. Never print API keys. Mask any secret in summaries.
+5. Never print API keys, auth tokens, or other credentials. Mask any secret in
+   summaries.
 6. After init succeeds, run `sh "$CLAUDE_PLUGIN_ROOT/scripts/status.sh"` again and
    report the base URL.
 7. The hook launcher reads `runtime.env`, so once init writes a base URL, prompt
    recall and session-save hooks use that backend automatically.
 
-Model preload branches on region (same as source setup — detect with Step 1a):
-
-- **CN region**: download from **ModelScope**, then bridge into HuggingFace hub cache
-  layout. Do NOT use `sentence_transformers.SentenceTransformer(...)` or raw
-  `huggingface_hub` — they hang on networks where HuggingFace is blocked.
-- **Non-CN region**: download directly via `huggingface_hub.snapshot_download`.
+Installed-plugin model preload uses `uvx --from modelscope python` to download
+from **ModelScope**, then bridges the files into the HuggingFace hub cache layout.
+Do NOT use `sentence_transformers.SentenceTransformer(...)` for preload; it starts
+model initialization instead of just populating the cache and can hang on networks
+where HuggingFace is blocked.
 
 If startup fails with `No module named 'sentence_transformers'`, the backend
-package installed in the plugin venv does not include the local embedding
-dependency. Publish or install a backend build that includes it, or set
-`POWERMEM_INIT_PACKAGE` to a Git branch/commit that does.
+package resolved by `uvx --from` does not include the local embedding dependency.
+Publish a backend build that includes it, or set `POWERMEM_INIT_PACKAGE` to a Git
+branch/commit that does.
 
 To test connectivity:
 ```bash
@@ -112,7 +140,8 @@ integration autonomously and ask me for any secret you need — never invent cre
 
 **🔒 DATA SAFETY — API Key Masking (MANDATORY):**
 When displaying ANY `.env` content — current values, proposed changes, confirmation
-summaries, or any other output — you MUST mask `LLM_API_KEY` and any other secret
+summaries, or any other output — you MUST mask `LLM_API_KEY`, `LLM_AUTH_TOKEN`,
+and any other secret
 values (passwords, tokens, keys):
 - **Key ≥ 10 chars:** show only first 4 + last 4 characters (e.g. `sk-a…b12x`)
 - **Key < 10 chars:** show `***`
@@ -124,7 +153,8 @@ the user and Claude Code cannot retroactively redact it. Follow these rules:
   `echo "${VAR:0:4}...${VAR: -4}"` to show first 4 + last 4, or `[ -n "$VAR" ] && echo "set" || echo "empty"` just to check existence.
 - When you need to `cat .env` or `grep` for secrets, pipe through sed to mask before printing:
   `cat .env | sed -E 's/(API_KEY=).*/\1***REDACTED***/'`
-- Never run `echo $LLM_API_KEY`, `env | grep KEY`, `cat .env` (unmasked), or any command
+- Never run `echo $LLM_API_KEY`, `echo $LLM_AUTH_TOKEN`, `env | grep KEY`,
+  `cat .env` (unmasked), or any command
   that would print a secret value directly to stdout.
 - Use `read` with `-s` (silent) when prompting for secrets interactively.
 
@@ -141,8 +171,8 @@ state and either skip, reuse, or refresh it instead of failing or duplicating wo
    apps/claude-code-plugin/ both exist). Tell me which path you will take:
      - SOURCE  -> build & deploy from this checkout and install the Claude Code
                   plugin GLOBALLY in HTTP mode (hooks -> REST; needs Go 1.22+).
-     - PIP     -> install from PyPI and connect via the powermem-mcp server
-                  (the plugin is NOT on PyPI, so pip users integrate over MCP).
+     - PYPI/MCP -> install PowerMem from PyPI with uv and connect via the
+                   powermem-mcp server (the plugin itself is NOT on PyPI).
 
 **⚠️ RULE: Every time you need to modify `.env` — for any reason, even a
 single variable — you MUST stop and ask the user what value to use. Show
@@ -151,54 +181,69 @@ rules above), propose the change, and WAIT for the user's confirmation before
 writing. Never silently patch `.env`.**
 
    1a. DETECT REGION (run before any network operations). Detect whether this
-   machine is in China — this determines model download source and PyPI mirror:
+   machine is in China — this determines uv install source, model download source,
+   and Python package index:
 
    ```bash
    CC=$(curl -s -m 5 https://ipinfo.io/country 2>/dev/null || echo "UNKNOWN")
    echo "Region: $CC"
    ```
 
-   - **If `CC=CN`**: use **ModelScope** for model downloads, and set PyPI mirror
-     to `https://pypi.tuna.tsinghua.edu.cn/simple/`.
-   - **If `CC != CN` (or `UNKNOWN`)**: use **HuggingFace** for model downloads,
-     and use the default PyPI index.
-   - Store `CC` in a shell variable — every pip install and model download step
-     below branches on this value. Re-check on every re-run (region may change
-     if the machine moves or VPN state changes).
+   - **If `CC=CN`**: install uv through the USTC GitHub Release mirror, use
+     **ModelScope** for model downloads, and set the Python package index to
+     `https://pypi.tuna.tsinghua.edu.cn/simple/`.
+   - **If `CC != CN` (or `UNKNOWN`)**: install uv through the official Astral
+     installer, use **HuggingFace** for model downloads, and use the default PyPI
+     index.
+   - Store `CC` in a shell variable — every uv install, package install, and model
+     download step below branches on this value. Re-check on every re-run (region
+     may change if the machine moves or VPN state changes).
 
-   **pip install conventions (apply to ALL pip commands in this file):**
+   **uv installation (run before any Python package install):**
 
-   a. **CN mirror** — if `CC=CN`, prefix every pip install with
-      `-i https://pypi.tuna.tsinghua.edu.cn/simple/ --trusted-host pypi.tuna.tsinghua.edu.cn`.
-      Non-CN (or UNKNOWN) uses the default PyPI index with no extra flags.
+   ```bash
+   if ! command -v uv >/dev/null 2>&1; then
+     if [ "$CC" = "CN" ]; then
+       export UV_DOWNLOAD_URL=https://mirrors.ustc.edu.cn/github-release/astral-sh/uv/LatestRelease/
+       curl -sL https://mirrors.ustc.edu.cn/github-release/astral-sh/uv/LatestRelease/uv-installer.sh | sh
+     else
+       curl -LsSf https://astral.sh/uv/install.sh | sh
+     fi
+     export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+   fi
+   uv --version
+   ```
 
-   b. **Timeout — set once** before any pip install:
-      ```bash
-      pip config set global.timeout 60
-      ```
+   **uv pip conventions (apply to ALL package installs in this file):**
 
-   c. **Retry — on failure, retry up to 3 times.** If a pip install command fails,
-      do NOT immediately escalate to the user. Retry the EXACT same command up to
-      2 more times (3 total attempts). If all 3 fail, only then report the error.
-      Between retries, wait 2 seconds:
+   a. **CN mirror** — if `CC=CN`, add
+      `--default-index https://pypi.tuna.tsinghua.edu.cn/simple` to every
+      `uv pip install` command. Non-CN (or UNKNOWN) uses the default PyPI index
+      with no extra flags.
+
+   b. **Retry — on failure, retry up to 3 times.** If a `uv pip install` command
+      fails, do NOT immediately escalate to the user. Retry the EXACT same command
+      up to 2 more times (3 total attempts). If all 3 fail, only then report the
+      error. Between retries, wait 2 seconds:
       ```bash
       for i in 1 2 3; do
-        pip install ... && break
-        echo "pip install attempt $i failed, retrying in 2s..."
+        uv pip install --python "$POWERMEM_PYTHON" ... && break
+        echo "uv pip install attempt $i failed, retrying in 2s..."
         sleep 2
       done
       ```
-      This applies to ALL pip install calls: editable installs, dependency installs,
-      model download dependencies, etc.
+      This applies to editable installs, dependency installs, model download
+      dependencies, etc.
 
-   d. **All four pip install locations** affected by (a)-(c):
-      1. `pip install -e '.[server,mcp,seekdb]'` (source editable install)
-      2. `$POWERMEM_PYTHON -m pip install -q modelscope` (model download dep)
-      3. `pip install "powermem[mcp,seekdb]"` (PIP path)
-      4. `$POWERMEM_PYTHON -m pip install -q huggingface_hub` (non-CN model download dep)
+   c. **All four package install locations** affected by (a)-(b):
+      1. `uv pip install --python "$POWERMEM_PYTHON" -e '.[server,mcp,seekdb]'`
+      2. `uv pip install --python "$POWERMEM_PYTHON" -q modelscope`
+      3. `uv pip install --python "$POWERMEM_PYTHON" "powermem[mcp,seekdb]"`
+      4. `uv pip install --python "$POWERMEM_PYTHON" -q huggingface_hub`
 
 2. COLLECT CONFIG (idempotent). If a .env already exists in the working directory
-   with LLM_PROVIDER / LLM_API_KEY / LLM_MODEL set to real values (not placeholders
+   with LLM_PROVIDER / LLM_API_KEY or LLM_AUTH_TOKEN / LLM_MODEL set to real
+   values (not placeholders
    like `your_api_key_here`), REUSE it — skip directly to step 3a/3b. Only collect
    what is missing. Use zero-config defaults for everything else (storage = embedded
    seekdb, embedder = local all-MiniLM-L6-v2) unless I say otherwise.
@@ -207,58 +252,69 @@ writing. Never silently patch `.env`.**
 
    | Option | Description |
    |--------|-------------|
-   | Yes, auto-detect | Auto-detect LLM config (priority: OS env → `~/.claude/settings.json` → manual) |
+   | Yes, auto-detect | Auto-detect LLM config from the current process environment, then `~/.claude/settings.json`, then ask only for missing fields |
 
    If the user selects "Yes, auto-detect" (or "Other" and types "yes"/"auto"):
 
-   **Auto-detection priority chain** — same order Claude Code uses internally:
-   1. **OS environment variables** (highest priority) — check these first:
-      - `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY`
-      - `ANTHROPIC_MODEL` / `OPENAI_MODEL` / `DEEPSEEK_MODEL`
-      - `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` / `DEEPSEEK_BASE_URL`
-   2. **`~/.claude/settings.json`** — fall back if env vars are missing
+   **Auto-detection priority chain**:
+   1. **Current process environment variables** — check these first:
+      - `ANTHROPIC_API_KEY`
+      - `ANTHROPIC_AUTH_TOKEN`
+      - `ANTHROPIC_BASE_URL`
+      - `ANTHROPIC_MODEL`
+   2. **`~/.claude/settings.json`** — use `env.ANTHROPIC_*`, `env.LLM_*`, and
+      top-level `model` as fallback sources
    3. **Manual input** — ask only for fields that are still missing
+
+   PowerMem supports Claude Code's Anthropic API-key path and bearer-token gateway
+   path. Do not treat `ANTHROPIC_AUTH_TOKEN` as `LLM_API_KEY`; copy it to
+   `LLM_AUTH_TOKEN` and require `ANTHROPIC_BASE_URL`. A token without a base URL
+   is incomplete; fall back to API-key mode or ask for the base URL instead of
+   sending the token to Anthropic's default endpoint. Do not migrate
+   `CLAUDE_CODE_OAUTH_TOKEN`, `/login` credentials, `apiKeyHelper`, Bedrock,
+   Vertex, or Foundry as either `LLM_API_KEY` or `LLM_AUTH_TOKEN`.
 
    **Step 1 — Check OS environment variables.** Run these checks silently (do not
    print the values, only note whether each field was found):
 
    | Field | Check |
    |-------|-------|
-   | LLM_PROVIDER | If `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is set → `anthropic`; elif `OPENAI_API_KEY` → `openai`; elif `DEEPSEEK_API_KEY` → `deepseek` |
-   | LLM_MODEL | `$ANTHROPIC_MODEL` or `$OPENAI_MODEL` or `$DEEPSEEK_MODEL` (provider-specific) |
-   | LLM_API_KEY | `$ANTHROPIC_API_KEY` or `$ANTHROPIC_AUTH_TOKEN` or `$OPENAI_API_KEY` or `$DEEPSEEK_API_KEY` |
-   | LLM_BASE_URL | `$ANTHROPIC_BASE_URL` or `$OPENAI_BASE_URL` or `$DEEPSEEK_BASE_URL` |
+   | LLM_PROVIDER | If `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is set → `anthropic`; otherwise infer from `ANTHROPIC_MODEL` prefix if present |
+   | LLM_MODEL | `$ANTHROPIC_MODEL` |
+   | LLM_API_KEY | `$ANTHROPIC_API_KEY` |
+   | LLM_AUTH_TOKEN | `$ANTHROPIC_AUTH_TOKEN`, only when `ANTHROPIC_API_KEY` is absent |
+   | LLM_BASE_URL | `$ANTHROPIC_BASE_URL` |
 
-   **Step 2 — If any field is still missing, read `~/.claude/settings.json`.**
+   If environment model detection fails, read `env.ANTHROPIC_MODEL`,
+   `env.LLM_MODEL`, or top-level `model` from `~/.claude/settings.json`. Keep
+   the model exactly as configured. Do not strip a `<provider>/` prefix and do
+   not rewrite dotted versions:
+     - `"anthropic/claude-opus-4.6"` → `LLM_PROVIDER=anthropic`, `LLM_MODEL=anthropic/claude-opus-4.6`
+     - `"anthropic/claude-sonnet-4.6"` → `LLM_PROVIDER=anthropic`, `LLM_MODEL=anthropic/claude-sonnet-4.6`
 
-   **Model and provider** — read `env.ANTHROPIC_MODEL` (Claude Code's standard model
-   key); fall back to the top-level `model` field if absent. Both use the format
-   `<provider>/<model>` — split on the first `/`:
-     - `"deepseek/deepseek-v4-pro"` → `LLM_PROVIDER=deepseek`, `LLM_MODEL=deepseek-v4-pro`
-     - `"anthropic/claude-sonnet-4-6"` → `LLM_PROVIDER=anthropic`, `LLM_MODEL=claude-sonnet-4-6`
-     - If neither field is present or has no `/`, leave the field unset — it will
-       be collected manually in Step 3.
-
-   ⚠️ **Anthropic model name normalization**: Claude Code's `settings.json` uses
-   **dots** for version numbers (e.g. `claude-sonnet-4.6`), but the Anthropic API
-   requires **dashes** (e.g. `claude-sonnet-4-6`). After splitting on `/`, if
-   `LLM_PROVIDER=anthropic`, replace every `.` with `-` in the version suffix of
-   `LLM_MODEL`. Rule: `claude-<name>-<major>.<minor>` → `claude-<name>-<major>-<minor>`.
-   Example: `claude-sonnet-4.6` → `claude-sonnet-4-6`, `claude-haiku-4.5` → `claude-haiku-4-5`.
-
-   **API key** — Claude Code always stores its credentials under `ANTHROPIC_*` keys
-   regardless of the actual model or provider. Read directly:
-     - `env.ANTHROPIC_AUTH_TOKEN` (preferred) or `env.ANTHROPIC_API_KEY`
+   **Credentials** — preserve PowerMem's environment precedence: API key first,
+   bearer-token gateway second. If environment credentials are incomplete, fall
+   back to the old `~/.claude/settings.json` credential flow. Read:
+     - `ANTHROPIC_API_KEY`
+     - `ANTHROPIC_AUTH_TOKEN`, only if `ANTHROPIC_API_KEY` is absent
+     - fallback `env.ANTHROPIC_AUTH_TOKEN` / `env.ANTHROPIC_API_KEY` from
+       `~/.claude/settings.json`
 
    **Base URL** — read directly:
-     - `env.ANTHROPIC_BASE_URL` (if absent, leave blank — PowerMem will use the
-       provider's default endpoint)
+     - `ANTHROPIC_BASE_URL`
+     - fallback `env.ANTHROPIC_BASE_URL` or `env.LLM_BASE_URL` from
+       `~/.claude/settings.json`
+     - If `ANTHROPIC_AUTH_TOKEN` is used, `ANTHROPIC_BASE_URL` is required.
+     - If `ANTHROPIC_API_KEY` is used and the base URL is absent, leave it blank —
+       PowerMem will use the provider's default endpoint.
 
-   **Step 3 — For any fields still missing after Steps 1-2,** ask as a plain chat
-   question (one at a time, per 2b–2e below). Only ask for what is actually missing.
+   **Step 3 — For any fields still missing after environment and settings
+   detection,** ask as a plain chat question (one at a time, per 2b–2e below).
+   Only ask for what is actually missing.
 
-   After all three steps, show a **masked** summary of the merged result (per
-   🔒 DATA SAFETY rules), noting the source of each field (env / settings.json / manual).
+   After detection/manual input, show a **masked** summary of the merged result
+   (per 🔒 DATA SAFETY rules), noting the source of each field
+   (env / settings.json / manual).
    Then jump to **2f**.
 
    If the user does NOT select auto-detect, fall back to the manual flow:
@@ -267,7 +323,8 @@ writing. Never silently patch `.env`.**
 
    **2c.** Ask: "What provider id? (e.g. openai, anthropic, qwen, deepseek, ollama)"
 
-   **2d.** Ask: "Please paste your API key." — skip if provider is `ollama` or `vllm`.
+   **2d.** Ask for the credential: API key for direct provider access, or auth
+   token for an Anthropic-compatible gateway. Skip if provider is `ollama` or `vllm`.
 
    **2e.** Ask: "Which model? (e.g. gpt-4o-mini, claude-sonnet-4-6, qwen-plus)"
 
@@ -276,33 +333,41 @@ writing. Never silently patch `.env`.**
 
    **2f. Confirm and write.** Show a **masked** summary of what will be written (per
    🔒 DATA SAFETY rules above), then WAIT for explicit "yes" before writing. Copy
-   `.env.example` if `.env` does not exist, then fill `LLM_PROVIDER` / `LLM_API_KEY`
+   `.env.example` if `.env` does not exist, then fill `LLM_PROVIDER` /
+   `LLM_API_KEY` or `LLM_AUTH_TOKEN`
    / `LLM_MODEL`. If a base URL was given, write it to the provider-prefixed
    `*_LLM_BASE_URL` (e.g. `OPENAI_LLM_BASE_URL`) — verify spelling against
    `.env.example.full`; a typo is silently ignored.
 
 3a. SOURCE path (global install):
-    - pip install -e '.[server,mcp,seekdb]'
+    - Ensure uv is installed using Step 1a, then create/reuse an explicit Python
+      environment and install PowerMem with uv:
+      ```bash
+      uv venv venv --python python3.11
+      POWERMEM_PYTHON="$(pwd)/venv/bin/python"
+      export PATH="$(pwd)/venv/bin:$PATH"
+      uv pip install --python "$POWERMEM_PYTHON" -e '.[server,mcp,seekdb]'
+      ```
       ⚠️ All three extras are required: `[server]` adds fastapi/uvicorn; `[mcp]` adds
       fastmcp, which is checked at import time and calls sys.exit(1) if missing —
       this kills the HTTP server before it can start even in HTTP-only mode;
       `[seekdb]` adds the embedded seekdb storage backend (default).
-    - Immediately after pip install, detect which Python interpreter was used. Read
+    - Immediately after `uv pip install`, detect which Python interpreter was used. Read
       the shebang from the freshly-installed `powermem-server` entry point — this is
-      the only reliable way to guarantee that the model-download script, the pip call
+      the only reliable way to guarantee that the model-download script, the uv call
       inside it, and the server all use the exact same interpreter and site-packages.
       On many Linux systems the default `python` points to a version below 3.11 and `python3` may point to a different minor
-      version than what pip used; relying on bare `python` or `pip` will silently use
+      version than what uv used; relying on bare `python` will silently use
       the wrong environment and the download will fail with an ImportError:
         POWERMEM_PYTHON=$(head -1 "$(command -v powermem-server)" \
           | sed 's|#!||;s| .*||')
         echo "Using interpreter: $POWERMEM_PYTHON"   # e.g. /usr/bin/python3.11
-    - Start the embedding model download in the background immediately after pip
-      install, so it runs in parallel with the remaining setup steps (hook build,
+    - Start the embedding model download in the background immediately after the
+      uv package install, so it runs in parallel with the remaining setup steps (hook build,
       plugin stage/install). Branch on the region detected in Step 1a:
 
       **CN region (ModelScope path):**
-        $POWERMEM_PYTHON -m pip install -q modelscope && $POWERMEM_PYTHON -c "
+        uv pip install --python "$POWERMEM_PYTHON" -q modelscope && $POWERMEM_PYTHON -c "
         from modelscope import snapshot_download
         snapshot_download('AI-ModelScope/all-MiniLM-L6-v2')
         import os, shutil, urllib.request, json
@@ -327,7 +392,7 @@ writing. Never silently patch `.env`.**
         " >> /tmp/powermem-model-download.log 2>&1 &
 
       **Non-CN region (HuggingFace path):**
-        $POWERMEM_PYTHON -m pip install -q huggingface_hub && $POWERMEM_PYTHON -c "
+        uv pip install --python "$POWERMEM_PYTHON" -q huggingface_hub && $POWERMEM_PYTHON -c "
         from huggingface_hub import snapshot_download
         snapshot_download('sentence-transformers/all-MiniLM-L6-v2')
         print('Model download complete.')
@@ -351,7 +416,7 @@ writing. Never silently patch `.env`.**
     - Build the hook binaries FIRST — they get copied into Claude's plugin cache at
       install time, so they must exist on disk before step "install":
         if Go 1.22+ is present:  make build-claude-hook
-        else tell me, and offer to install Go or fall back to the PIP path below.
+        else tell me, and offer to install Go or fall back to the PYPI/MCP path below.
     - Ensure the plugin's root .mcp.json stays empty ({}) — default HTTP mode.
     - STAGE the plugin into a stable, Claude-owned location so the marketplace does
       NOT depend on this checkout — you can move or delete the repo afterwards and
@@ -387,7 +452,7 @@ writing. Never silently patch `.env`.**
         grep -q "complete" /tmp/powermem-model-download.log 2>/dev/null \
           || { echo "Model download failed. Check /tmp/powermem-model-download.log"; exit 1; }
     - Start the API server only if it is not already healthy (idempotent).
-      ⚠️ STARTUP TIME: first launch takes 60–120s (seekdb init + embedder load).
+      ⚠️ STARTUP TIME: first launch can take 60–120s (local embedder load/download + uvicorn bind).
       Exit code 7 means the port is not yet bound — do NOT kill and restart.
         curl -s http://localhost:8848/api/v1/system/health | grep -q healthy \
           || { powermem-server --host 0.0.0.0 --port 8848 &
@@ -423,9 +488,12 @@ writing. Never silently patch `.env`.**
       memory-powermem@powermem). Do NOT print a --plugin-dir command — it is global
       now; every `claude` and `claude -p` loads it automatically.
 
-3b. PIP path:
+3b. PYPI/MCP path:
     - Install the MCP extra in the environment that Claude will use, then:
-      pip install "powermem[mcp,seekdb]"
+      uv venv venv --python python3.11
+      POWERMEM_PYTHON="$(pwd)/venv/bin/python"
+      export PATH="$(pwd)/venv/bin:$PATH"
+      uv pip install --python "$POWERMEM_PYTHON" "powermem[mcp,seekdb]"
       powermem-mcp --help
     - Register the MCP server globally so it persists across sessions (stdio = no
       port), run from the directory holding the .env. Idempotent: if `claude mcp get
@@ -488,13 +556,12 @@ writing. Never silently patch `.env`.**
       prompt from an UNRELATED dir with NO --plugin-dir, then check the logs for
       the two hook-driven calls it triggers:
         ( cd /tmp && claude -p "Reply with exactly: probe ok" )
-      Then in `server.log` (powermem-server) and `seekdb_data/log/seekdb.log`
-      (seekdb), AFTER that run, you MUST see both:
+      Then in `server.log` (powermem-server), AFTER that run, you MUST see both:
         POST /api/v1/memories/search   <- UserPromptSubmit hook (auto-recall)
         POST /api/v1/memories          <- SessionEnd hook (auto-save)
       Seeing both proves PowerMem loads automatically in every `claude`/`claude -p`.
 
-   PIP/MCP path: confirm `claude mcp list` shows powermem as "connected" (not
+   PYPI/MCP path: confirm `claude mcp list` shows powermem as "connected" (not
    "failed"). If it shows failed, run the MCP diagnostics below and do not report
    success until the direct MCP process starts cleanly and Claude shows it connected.
 
@@ -512,7 +579,7 @@ writing. Never silently patch `.env`.**
         sed -n '1,40p' /tmp/powermem-mcp.stdout
       Interpret the output:
         - stderr has import errors: install/repair the package or virtual environment.
-        - stderr has missing LLM/API key/config errors: fix `.env` after asking the
+        - stderr has missing LLM/API key/auth token/config errors: fix `.env` after asking the
           user for approval; never silently patch `.env`.
         - stderr has model download or network timeouts: pre-download the model or
           switch to a configured remote embedder.
@@ -567,24 +634,24 @@ and their resolutions discovered during actual setup attempts:
 ### Error Resolution Checklist
 
 #### [E001] PEP 668 System Protection
-**Problem**: `pip install` fails with "externally-managed-environment"
-**Fix**: Use virtual environment
+**Problem**: system Python blocks package installation with "externally-managed-environment"
+**Fix**: use uv with a virtual environment
 ```bash
-python3 -m venv venv
+uv venv venv --python python3.11
 source venv/bin/activate
-pip install -e '.[server,seekdb]'
+uv pip install --python "$VIRTUAL_ENV/bin/python" -e '.[server,seekdb]'
 ```
 
 #### [E002] Missing Server Dependencies
 **Problem**: Server startup fails with missing packages
 **Fix**: Install missing dependencies
 ```bash
-pip install 'powermem[server,seekdb]'
+uv pip install --python "$POWERMEM_PYTHON" 'powermem[server,seekdb]'
 ```
 
 #### [E003] SeekDB File Locking
 **Problem**: "open seekdb failed OB_ERROR(4000)" or "db opened by other process"
-**Fix**: Clean corrupted data
+**Fix**: Stop duplicate servers, then remove stale seekdb data only if data loss is acceptable
 ```bash
 pkill -f powermem-server
 rm -rf seekdb_data
@@ -601,9 +668,13 @@ make build-claude-hook
 
 #### [E005] Storage Backend Initialization
 **Problem**: 503 errors on API calls despite server health
-**Fix**: Use SQLite alternative
+**Fix**: the Claude Code plugin defaults to embedded OceanBase/seekdb. Stop the
+managed server, remove stale seekdb data only if you accept deleting local memories, and
+restart init:
 ```bash
-STORAGE_TYPE=sqlite SQLITE_DB_PATH=sqlite_data/powermem.db powermem-server --host 0.0.0.0 --port 8848 &
+sh "$CLAUDE_PLUGIN_ROOT/scripts/stop.sh"
+rm -rf "$HOME/.powermem/seekdb_data"
+sh "$CLAUDE_PLUGIN_ROOT/scripts/init.sh"
 ```
 
 #### [E006] Model Download Timeout
@@ -616,7 +687,7 @@ Step 1a). Quick reference:
 ```bash
 # Detect the correct interpreter first (same one powermem uses):
 POWERMEM_PYTHON=$(head -1 "$(command -v powermem-server)" | sed 's|#!||;s| .*||')
-$POWERMEM_PYTHON -m pip install modelscope
+uv pip install --python "$POWERMEM_PYTHON" modelscope
 $POWERMEM_PYTHON -c "from modelscope import snapshot_download; \
                      snapshot_download('AI-ModelScope/all-MiniLM-L6-v2')"
 # Verify (note: models/ subdirectory is required):
@@ -626,15 +697,14 @@ ls ~/.cache/modelscope/hub/models/AI-ModelScope/all-MiniLM-L6-v2/
 **Non-CN region** (HuggingFace direct):
 ```bash
 POWERMEM_PYTHON=$(head -1 "$(command -v powermem-server)" | sed 's|#!||;s| .*||')
-$POWERMEM_PYTHON -m pip install huggingface_hub
+uv pip install --python "$POWERMEM_PYTHON" huggingface_hub
 $POWERMEM_PYTHON -c "from huggingface_hub import snapshot_download; \
                      snapshot_download('sentence-transformers/all-MiniLM-L6-v2')"
 # Verify:
 ls ~/.cache/huggingface/hub/models--sentence-transformers--all-MiniLM-L6-v2/snapshots/
 ```
-⚠️ Do NOT use bare `pip` or `python` here — on many systems the default `python` version is below 3.11
-and `pip` may target a different minor version than what powermem was installed under.
-Using the shebang from `powermem-server` guarantees all three steps (pip, download,
+⚠️ Do NOT use bare `python` here — on many systems the default `python` version is below 3.11.
+Using the shebang from `powermem-server` guarantees all three steps (uv install, download,
 bridge) run in the same environment.
 Then run the bridge script from Step 3a to populate the HuggingFace hub cache
 structure — the embedder's cache-detection function checks `~/.cache/huggingface/hub/`,
@@ -657,18 +727,18 @@ curl -s -m 10 -o /dev/null -w "HuggingFace: HTTP %{http_code}\n" \
 **Problem**: `curl` returns exit code 7 ("Failed to connect") right after launching
 `powermem-server`.
 **Cause**: The server process is running but not yet listening on port 8848. First
-launch takes 60–120s (seekdb table creation + embedder load + uvicorn bind).
+launch can take 60–120s (local embedder load/download + uvicorn bind).
 **Fix**: Use the polling loop from Step 3a. Do NOT kill and restart — restarting
 resets initialization and makes startup take even longer.
 
 #### [E009] Server Exits Immediately — `fastapi`, `uvicorn`, or `fastmcp` Missing
 **Problem**: Server exits immediately after launch with "Missing dependencies" error.
-**Cause**: `pip install -e .` installs only base dependencies. `fastmcp` is checked
+**Cause**: installing only the base project skips optional server/MCP dependencies. `fastmcp` is checked
 at **import time** and calls `sys.exit(1)` if absent — `try/except` cannot catch this,
 so even the HTTP-only server is killed before it starts.
 **Fix**:
 ```bash
-pip install -e '.[server,mcp]'
+uv pip install --python "$POWERMEM_PYTHON" -e '.[server,mcp,seekdb]'
 ```
 
 #### [E010] Anthropic `temperature` + `top_p` both sent → 400
@@ -708,32 +778,36 @@ Diagnosis:
   waiting for JSON-RPC input; re-check Claude-side registration next.
 
 #### [E011] Python Version Below 3.11
-**Problem**: `pip install` fails or venv created with wrong Python version.
+**Problem**: package installation fails or venv created with wrong Python version.
 PowerMem requires Python >= 3.11 (`pyproject.toml: requires-python = ">=3.11"`).
 **Fix**: Verify and use Python 3.11+:
 ```bash
 python3 --version  # must be >= 3.11
 # If too old, find and use a newer Python:
 python3.11 --version
-python3.11 -m venv venv
+uv venv venv --python python3.11
 source venv/bin/activate
 ```
 
-#### [E012] pip Too Old for Editable Install
-**Problem**: `pip install -e .` fails with "File setup.py not found. Directory cannot
-be installed in editable mode."
-**Cause**: pip < 21.3 does not support editable installs via pyproject.toml (PEP 660).
-**Fix**: Upgrade pip first:
+#### [E012] uv Missing or Not on PATH
+**Problem**: `uv: command not found`
+**Fix**: Install uv for your region, then add the install directory to PATH:
 ```bash
-source venv/bin/activate
-pip install --upgrade pip
-pip install -e '.[server,mcp,seekdb]'
+# Non-CN:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# CN:
+export UV_DOWNLOAD_URL=https://mirrors.ustc.edu.cn/github-release/astral-sh/uv/LatestRelease/
+curl -sL https://mirrors.ustc.edu.cn/github-release/astral-sh/uv/LatestRelease/uv-installer.sh | sh
+
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+uv --version
 ```
 
 #### [E013] Internal PyPI Mirror Missing Packages
-**Problem**: `pip install` fails with "No matching distribution found for pyobvector"
+**Problem**: `uv pip install` fails with "No matching distribution found for pyobvector"
 (or pyseekdb, onnxruntime, etc.).
-**Cause**: The configured pip index (e.g. internal mirror at `yum.tbsite.net`) does not
+**Cause**: The configured Python package index (e.g. internal mirror at `yum.tbsite.net`) does not
 mirror all required packages.
 **Fix**: If the package is already installed elsewhere (e.g. system Python 3.11), copy
 it into the venv:
@@ -755,11 +829,11 @@ initialization failed" with `ModuleNotFoundError: No module named 'onnxruntime'`
 (or `tenacity`, `tokenizers`).
 **Cause**: When packages like pyobvector/pyseekdb are copied manually into the venv,
 their transitive dependencies (onnxruntime, tenacity, tokenizers, etc.) are not
-automatically resolved by pip.
+automatically resolved by the package installer.
 **Fix**: Install the missing transitive dependencies:
 ```bash
 source venv/bin/activate
-pip install onnxruntime tenacity tokenizers
+uv pip install --python "$VIRTUAL_ENV/bin/python" onnxruntime tenacity tokenizers
 ```
 To verify no other dependencies are missing after manual copying:
 ```bash
@@ -771,8 +845,8 @@ python -c "import pyseekdb" 2>&1    # should produce no output
 
 1. **Verify Python version**: `python3 --version` (must be >= 3.11, see [E011])
 2. **Verify Go version**: `go version` (must be 1.22+)
-3. **Verify pip version**: `python3 -m pip --version` (must be >= 21.3, see [E012])
-4. **Check mirror access**: `pip config list` — if using an internal mirror, verify
+3. **Verify uv**: `uv --version` (install it with [E012] if missing)
+4. **Check mirror access**: if using an internal mirror, verify
    it has `pyobvector`, `pyseekdb`, and `onnxruntime`; see [E013] if not.
 
 ## STEP BY STEP PROVEN PATH
@@ -781,16 +855,13 @@ Given the encountered errors, here are the tested workarounds for each approach:
 
 ### Method A: SOURCE Path (Current Directory Build)
 ```bash
-# Create virtual environment to avoid PEP 668 issues
-# (use python3.11 explicitly if the default python3 is < 3.11)
-python3 -m venv venv
+# Create virtual environment to avoid PEP 668 issues.
+uv venv venv --python python3.11
 source venv/bin/activate
-
-# Upgrade pip first (needed for pyproject.toml editable installs)
-pip install --upgrade pip
+POWERMEM_PYTHON="$VIRTUAL_ENV/bin/python"
 
 # Install everything with ALL required extras
-pip install -e '.[server,mcp,seekdb]'
+uv pip install --python "$POWERMEM_PYTHON" -e '.[server,mcp,seekdb]'
 
 # Build and stage Claude hooks
 make build-claude-hook
@@ -806,12 +877,13 @@ claude plugin install memory-powermem@powermem --scope user
 powermem-server --host 0.0.0.0 --port 8848 &
 ```
 
-### Method B: PIP Path (Recommended for Stability)
+### Method B: PYPI/MCP Path (Recommended for Stability)
 ```bash
 # Clean virtual environment approach
-python3 -m venv venv
+uv venv venv --python python3.11
 source venv/bin/activate
-pip install 'powermem[mcp,seekdb]'
+POWERMEM_PYTHON="$VIRTUAL_ENV/bin/python"
+uv pip install --python "$POWERMEM_PYTHON" 'powermem[mcp,seekdb]'
 claude mcp remove powermem 2>/dev/null
 claude mcp add powermem -- powermem-mcp stdio
 ```
@@ -821,11 +893,11 @@ claude mcp add powermem -- powermem-mcp stdio
 # Common troubleshooting commands
 lsof -i :8848    # Check if port is in use
 pkill -f powermem-server  # Kill any running server
-rm -rf seekdb_data  # Reset SeekDB if corrupted
+rm -rf seekdb_data  # Reset SeekDB if corrupted and data loss is acceptable
 
 # Check logs
-tail -f server.log              # PowerMem server errors
-tail -f seekdb_data/log/seekdb.log  # SeekDB engine errors
+tail -f server.log                    # PowerMem server errors
+tail -f seekdb_data/log/seekdb.log    # SeekDB engine errors
 ```
 
 ## FINAL VALIDATION STEPS
@@ -873,12 +945,12 @@ systemctl --user start powermem.service
 
 ## SUMMARY
 
-**Path taken**: **[Based on observed errors, recommend PIP approach for stability]**
+**Path taken**: **[Based on observed errors, recommend PYPI/MCP approach for stability]**
 - **.env location**: $(pwd)/.env
 - **Virtual environment**: $(pwd)/venv  
 - **Plugin marketplace**: ~/.claude/marketplaces/powermem
 - **Server URL**: http://localhost:8848
-- **Memory system**: SQLite storage with HTTP hooks
+- **Memory system**: seekdb storage with HTTP hooks
 - **Global enablement**: Complete via `claude plugin install`
 - **Usage**: Run `claude` command with no extra flags needed
 

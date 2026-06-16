@@ -294,11 +294,35 @@ class MemoryGraph(GraphStoreBase):
             - graph_relationships: Stores relationships between entities
         """
 
-        if not self.client.check_table_exists(constants.TABLE_ENTITIES):
+        entities_exists = self.client.check_table_exists(constants.TABLE_ENTITIES)
+        if entities_exists:
+            has_user_id = self._entities_table_has_user_id()
+            if has_user_id is None:
+                raise RuntimeError(
+                    f"Unable to inspect {constants.TABLE_ENTITIES} schema before graph migration"
+                )
+            needs_entity_migration = not has_user_id
+        else:
+            needs_entity_migration = False
+
+        if needs_entity_migration:
+            logger.warning(
+                "%s table does not include user_id. Recreating graph tables to enforce user isolation.",
+                constants.TABLE_ENTITIES,
+            )
+            if self.client.check_table_exists(constants.TABLE_RELATIONSHIPS):
+                self.client.drop_table_if_exist(constants.TABLE_RELATIONSHIPS)
+                logger.info("Dropped %s table for graph entity user_id migration", constants.TABLE_RELATIONSHIPS)
+            self.client.drop_table_if_exist(constants.TABLE_ENTITIES)
+            logger.info("Dropped %s table for graph entity user_id migration", constants.TABLE_ENTITIES)
+            entities_exists = False
+
+        if not entities_exists:
             # Define columns for entities table
             cols = [
                 Column("id", BigInteger, primary_key=True, autoincrement=False),
                 Column("name", String(255), nullable=False),
+                Column("user_id", String(128), nullable=False),
                 Column("entity_type", String(64)),
                 Column("embedding", VECTOR(self.embedding_dims)),
                 Column("created_at", TIMESTAMP, server_default=text("CURRENT_TIMESTAMP")),
@@ -306,7 +330,7 @@ class MemoryGraph(GraphStoreBase):
             ]
             # Define regular indexes
             indexes = [
-                Index("idx_name", "name"),
+                Index("idx_user_name", "user_id", "name"),
             ]
 
             # Map index_type string to VecIndexType enum
@@ -376,6 +400,15 @@ class MemoryGraph(GraphStoreBase):
             logger.info("%s table created successfully", constants.TABLE_RELATIONSHIPS)
         else:
             logger.info("%s table already exists", constants.TABLE_RELATIONSHIPS)
+
+    def _entities_table_has_user_id(self) -> Optional[bool]:
+        """Return whether the existing graph entity table is user-scoped."""
+        try:
+            table = Table(constants.TABLE_ENTITIES, self.metadata, autoload_with=self.engine)
+            return "user_id" in table.c
+        except Exception as exc:
+            logger.warning("Unable to inspect %s schema: %s", constants.TABLE_ENTITIES, exc)
+            return None
 
     def _get_existing_vector_dimension_for_entities(self) -> Optional[int]:
         """Get the dimension of the existing vector field in entities table.
@@ -456,8 +489,9 @@ class MemoryGraph(GraphStoreBase):
         search_output = self._search_graph_db(node_list=list(entity_type_map.keys()), filters=filters)
         to_be_deleted = self._get_delete_entities_from_search_output(search_output, data, filters)
 
-        deleted_entities = self._delete_entities(to_be_deleted, filters)
-        added_entities = self._add_entities(to_be_added, filters, entity_type_map)
+        with self.engine.begin() as conn:
+            deleted_entities = self._delete_entities(to_be_deleted, filters, conn=conn)
+            added_entities = self._add_entities(to_be_added, filters, entity_type_map, conn=conn)
         logger.debug("Deleted entities: %s, Added entities: %s", deleted_entities, added_entities)
         return {"deleted_entities": deleted_entities, "added_entities": added_entities}
 
@@ -503,9 +537,10 @@ class MemoryGraph(GraphStoreBase):
             if idx < len(search_output):
                 item = search_output[idx]
                 search_results.append({
-                    "source": item["source"], 
-                    "relationship": item["relationship"], 
-                    "destination": item["destination"]
+                    "source": item["source"],
+                    "relationship": item["relationship"],
+                    "destination": item["destination"],
+                    "score": float(scores[idx]),
                 })
 
         logger.info("Returned %d search results (from %d candidates)", len(search_results), len(search_output))
@@ -652,9 +687,16 @@ class MemoryGraph(GraphStoreBase):
         Returns:
             Dictionary mapping entity names to entity types.
         """
-        _tools = [self.graph_tools_prompts.get_extract_entities_tool()]
         if constants.is_structured_llm_provider(self.llm_provider):
-            _tools = [self.graph_tools_prompts.get_extract_entities_tool(structured=True)]
+            _tools = [
+                self.graph_tools_prompts.get_extract_entities_tool(structured=True),
+                self.graph_tools_prompts.get_noop_tool(structured=True),
+            ]
+        else:
+            _tools = [
+                self.graph_tools_prompts.get_extract_entities_tool(),
+                self.graph_tools_prompts.get_noop_tool(),
+            ]
 
         search_results = self.llm.generate_response(
             messages=[
@@ -736,9 +778,16 @@ class MemoryGraph(GraphStoreBase):
                 },
             ]
 
-        _tools = [self.graph_tools_prompts.get_relations_tool()]
         if constants.is_structured_llm_provider(self.llm_provider):
-            _tools = [self.graph_tools_prompts.get_relations_tool(structured=True)]
+            _tools = [
+                self.graph_tools_prompts.get_relations_tool(structured=True),
+                self.graph_tools_prompts.get_noop_tool(structured=True),
+            ]
+        else:
+            _tools = [
+                self.graph_tools_prompts.get_relations_tool(),
+                self.graph_tools_prompts.get_noop_tool(),
+            ]
 
         extracted_entities = self.llm.generate_response(
             messages=messages,
@@ -781,6 +830,7 @@ class MemoryGraph(GraphStoreBase):
             List of dictionaries containing source, relationship, destination and their IDs.
         """
         result_relations = []
+        seen_relations = set()
 
         for node in node_list:
             n_embedding = self.embedding_model.embed(node)
@@ -798,7 +848,16 @@ class MemoryGraph(GraphStoreBase):
 
             # Use multi-hop search with early stopping
             multi_hop_results = self._multi_hop_search(entity_ids, filters, limit)
-            result_relations.extend(multi_hop_results)
+            for relation in multi_hop_results:
+                relation_key = (
+                    relation.get("source"),
+                    relation.get("relationship"),
+                    relation.get("destination"),
+                )
+                if relation_key in seen_relations:
+                    continue
+                seen_relations.add(relation_key)
+                result_relations.append(relation)
 
         return result_relations
 
@@ -1043,7 +1102,8 @@ class MemoryGraph(GraphStoreBase):
     def _delete_entities(
             self,
             to_be_deleted: List[Dict[str, str]],
-            filters: Dict[str, Any]
+            filters: Dict[str, Any],
+            conn=None
     ) -> List[Dict[str, int]]:
         """Delete the specified relationships from the graph.
 
@@ -1061,23 +1121,29 @@ class MemoryGraph(GraphStoreBase):
             destination = item["destination"]
             relationship = item["relationship"]
 
-            # First, find the source and destination entities by name
+            # First, find the source and destination entities by name for this user.
             source_entities = self.client.get(
                 table_name=constants.TABLE_ENTITIES,
                 ids=None,
                 output_column_name=["id", "name"],
-                where_clause=[text(f"name = :source_name").bindparams(
-                    bindparam("source_name", source)
-                )]
+                where_clause=[
+                    text("name = :source_name AND user_id = :user_id").bindparams(
+                        bindparam("source_name", source),
+                        bindparam("user_id", filters["user_id"]),
+                    )
+                ]
             )
 
             dest_entities = self.client.get(
                 table_name=constants.TABLE_ENTITIES,
                 ids=None,
                 output_column_name=["id", "name"],
-                where_clause=[text(f"name = :dest_name").bindparams(
-                    bindparam("dest_name", destination)
-                )]
+                where_clause=[
+                    text("name = :dest_name AND user_id = :user_id").bindparams(
+                        bindparam("dest_name", destination),
+                        bindparam("user_id", filters["user_id"]),
+                    )
+                ]
             )
 
             # Get entity IDs
@@ -1137,12 +1203,18 @@ class MemoryGraph(GraphStoreBase):
             where_str = " AND ".join(where_clauses)
             where_clause = text(where_str).bindparams(**params)
 
-            # Delete relationships using pyobvector delete method.
+            # Delete relationships.
             try:
-                delete_result = self.client.delete(
-                    table_name=constants.TABLE_RELATIONSHIPS,
-                    where_clause=[where_clause]
-                )
+                if conn is not None:
+                    delete_result = conn.execute(
+                        text(f"DELETE FROM {constants.TABLE_RELATIONSHIPS} WHERE {where_str}"),
+                        params,
+                    )
+                else:
+                    delete_result = self.client.delete(
+                        table_name=constants.TABLE_RELATIONSHIPS,
+                        where_clause=[where_clause]
+                    )
                 deleted_count = (
                     delete_result.rowcount
                     if hasattr(delete_result, "rowcount")
@@ -1151,6 +1223,8 @@ class MemoryGraph(GraphStoreBase):
                 results.append({"deleted_count": deleted_count})
             except Exception as e:
                 logger.warning("Error deleting relationship: %s", e)
+                if conn is not None:
+                    raise
                 results.append({"deleted_count": 0})
 
         return results
@@ -1159,7 +1233,8 @@ class MemoryGraph(GraphStoreBase):
             self,
             to_be_added: List[Dict[str, str]],
             filters: Dict[str, Any],
-            entity_type_map: Dict[str, str]
+            entity_type_map: Dict[str, str],
+            conn=None
     ) -> List[Dict[str, str]]:
         """Add new entities and relationships to the graph.
 
@@ -1172,6 +1247,7 @@ class MemoryGraph(GraphStoreBase):
             List of dictionaries containing added source, relationship, and target.
         """
         results = []
+        entity_ids_by_name: Dict[str, int] = {}
 
         for item in to_be_added:
             source = item["source"]
@@ -1181,28 +1257,38 @@ class MemoryGraph(GraphStoreBase):
             source_embedding = self.embedding_model.embed(source)
             dest_embedding = self.embedding_model.embed(destination)
 
-            # Search for existing similar nodes.
-            source_node = self._search_source_node(source_embedding, filters,
-                                                   threshold=constants.DEFAULT_SIMILARITY_THRESHOLD, limit=1)
-            dest_node = self._search_destination_node(dest_embedding, filters,
-                                                      threshold=constants.DEFAULT_SIMILARITY_THRESHOLD, limit=1)
-
             # Get or create source entity
-            if source_node:
-                source_id = source_node["id"]
-            else:
-                source_id = self._create_entity(source, entity_type_map.get(source, "entity"),
-                                                source_embedding, filters)
+            source_id = entity_ids_by_name.get(source)
+            if source_id is None:
+                source_node = self._search_source_node(source_embedding, filters,
+                                                       threshold=constants.DEFAULT_SIMILARITY_THRESHOLD, limit=1)
+                if source_node:
+                    source_id = source_node["id"]
+                else:
+                    source_id = self._create_entity(source, entity_type_map.get(source, "entity"),
+                                                    source_embedding, filters, conn=conn)
+                entity_ids_by_name[source] = source_id
 
             # Get or create destination entity
-            if dest_node:
-                dest_id = dest_node["id"]
-            else:
-                dest_id = self._create_entity(destination, entity_type_map.get(destination, "entity"),
-                                              dest_embedding, filters)
+            dest_id = entity_ids_by_name.get(destination)
+            if dest_id is None:
+                dest_node = self._search_destination_node(dest_embedding, filters,
+                                                          threshold=constants.DEFAULT_SIMILARITY_THRESHOLD, limit=1)
+                if dest_node:
+                    dest_id = dest_node["id"]
+                else:
+                    dest_id = self._create_entity(destination, entity_type_map.get(destination, "entity"),
+                                                  dest_embedding, filters, conn=conn)
+                entity_ids_by_name[destination] = dest_id
 
             # Create or update relationship
-            rel_result = self._create_or_update_relationship(source_id, dest_id, relationship, filters)
+            rel_result = self._create_or_update_relationship(
+                source_id,
+                dest_id,
+                relationship,
+                filters,
+                conn=conn,
+            )
             results.append(rel_result)
 
         return results
@@ -1237,6 +1323,10 @@ class MemoryGraph(GraphStoreBase):
         vec_str = "[" + ",".join([str(np.float32(v)) for v in embedding]) + "]"
         distance_expr = l2_distance(table.c.embedding, vec_str)
         where_clause = [distance_expr < threshold]
+        user_id = filters.get("user_id") if filters else None
+        if user_id is None:
+            raise ValueError("user_id is required for graph entity search")
+        where_clause.append(table.c.user_id == user_id)
 
         results = self.client.ann_search(
             table_name=constants.TABLE_ENTITIES,
@@ -1268,7 +1358,8 @@ class MemoryGraph(GraphStoreBase):
             name: str,
             entity_type: str,
             embedding: List[float],
-            filters: Dict[str, Any]
+            filters: Dict[str, Any],
+            conn=None
     ) -> int:
         """Create a new entity in the graph.
 
@@ -1277,6 +1368,7 @@ class MemoryGraph(GraphStoreBase):
             entity_type: Type of the entity.
             embedding: Vector embedding of the entity.
             filters: Dictionary containing user_id, agent_id, run_id.
+            conn: Optional database connection to use.
 
         Returns:
             Snowflake ID of the created entity.
@@ -1288,17 +1380,32 @@ class MemoryGraph(GraphStoreBase):
         record = {
             "id": entity_id,
             "name": name,
+            "user_id": filters["user_id"],
             "entity_type": entity_type,
             "embedding": embedding,
             "created_at": current_time,
             "updated_at": current_time,
         }
 
-        # Use pyobvector upsert method
-        self.client.upsert(
-            table_name=constants.TABLE_ENTITIES,
-            data=[record],
-        )
+        if conn is not None:
+            table = Table(
+                constants.TABLE_ENTITIES,
+                MetaData(),
+                Column("id", BigInteger),
+                Column("name", String(255)),
+                Column("user_id", String(128)),
+                Column("entity_type", String(64)),
+                Column("embedding", VECTOR(self.embedding_dims)),
+                Column("created_at", TIMESTAMP),
+                Column("updated_at", TIMESTAMP),
+            )
+            conn.execute(table.insert(), record)
+        else:
+            # Use pyobvector upsert method
+            self.client.upsert(
+                table_name=constants.TABLE_ENTITIES,
+                data=[record],
+            )
 
         logger.debug("Created entity: %s with id: %s", name, entity_id)
         return entity_id
@@ -1308,7 +1415,8 @@ class MemoryGraph(GraphStoreBase):
             source_id: int,
             dest_id: int,
             relationship_type: str,
-            filters: Dict[str, Any]
+            filters: Dict[str, Any],
+            conn=None
     ) -> Dict[str, str]:
         """Create or update a relationship between two entities.
 
@@ -1338,13 +1446,19 @@ class MemoryGraph(GraphStoreBase):
 
         where_clause_with_params = text(where_str).bindparams(**params)
 
-        # Check if relationship exists
-        existing_relationships = self.client.get(
-            table_name=constants.TABLE_RELATIONSHIPS,
-            ids=None,
-            output_column_name=["id"],
-            where_clause=[where_clause_with_params]
-        )
+        # Check if relationship exists.
+        if conn is not None:
+            existing_relationships = conn.execute(
+                text(f"SELECT id FROM {constants.TABLE_RELATIONSHIPS} WHERE {where_str}"),
+                params,
+            )
+        else:
+            existing_relationships = self.client.get(
+                table_name=constants.TABLE_RELATIONSHIPS,
+                ids=None,
+                output_column_name=["id"],
+                where_clause=[where_clause_with_params]
+            )
 
         existing_rows = OceanBaseUtil.safe_fetchall(existing_relationships)
         if not existing_rows:
@@ -1362,24 +1476,50 @@ class MemoryGraph(GraphStoreBase):
                 "updated_at": current_time,
             }
 
-            self.client.insert(
-                table_name=constants.TABLE_RELATIONSHIPS,
-                data=[new_record],
-            )
+            if conn is not None:
+                conn.execute(
+                    text(
+                        f"""
+                        INSERT INTO {constants.TABLE_RELATIONSHIPS}
+                        (id, source_entity_id, relationship_type, destination_entity_id,
+                         user_id, agent_id, run_id, created_at, updated_at)
+                        VALUES
+                        (:id, :source_entity_id, :relationship_type, :destination_entity_id,
+                         :user_id, :agent_id, :run_id, :created_at, :updated_at)
+                        """
+                    ),
+                    new_record,
+                )
+            else:
+                self.client.insert(
+                    table_name=constants.TABLE_RELATIONSHIPS,
+                    data=[new_record],
+                )
 
         # Get the names for return value using pyobvector get method
         # First get the entities
-        source_entity = OceanBaseUtil.safe_fetchone(self.client.get(
-            table_name=constants.TABLE_ENTITIES,
-            ids=[source_id],
-            output_column_name=["id", "name"]
-        ))
+        if conn is not None:
+            source_entity = OceanBaseUtil.safe_fetchone(conn.execute(
+                text(f"SELECT id, name FROM {constants.TABLE_ENTITIES} WHERE id = :entity_id"),
+                {"entity_id": source_id},
+            ))
 
-        dest_entity = OceanBaseUtil.safe_fetchone(self.client.get(
-            table_name=constants.TABLE_ENTITIES,
-            ids=[dest_id],
-            output_column_name=["id", "name"]
-        ))
+            dest_entity = OceanBaseUtil.safe_fetchone(conn.execute(
+                text(f"SELECT id, name FROM {constants.TABLE_ENTITIES} WHERE id = :entity_id"),
+                {"entity_id": dest_id},
+            ))
+        else:
+            source_entity = OceanBaseUtil.safe_fetchone(self.client.get(
+                table_name=constants.TABLE_ENTITIES,
+                ids=[source_id],
+                output_column_name=["id", "name"]
+            ))
+
+            dest_entity = OceanBaseUtil.safe_fetchone(self.client.get(
+                table_name=constants.TABLE_ENTITIES,
+                ids=[dest_id],
+                output_column_name=["id", "name"]
+            ))
 
         return {
             "source": source_entity[1] if source_entity else None,

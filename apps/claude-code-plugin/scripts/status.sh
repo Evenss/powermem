@@ -11,6 +11,7 @@ echo "PowerMem Claude Code plugin status"
 echo "Data dir: $DATA_DIR"
 echo "Runtime file: $RUNTIME_FILE"
 echo "Env file: $ENV_FILE"
+echo "PID file: $(managed_pid_file)"
 echo "Base URL: $base_url"
 
 if BOOTSTRAP_PYTHON=$(choose_python 2>/dev/null); then
@@ -26,16 +27,28 @@ else
 fi
 
 if pid_alive; then
-  echo "Managed server PID: $(cat "$PID_FILE")"
+  echo "Managed server PID: $(managed_pid)"
 else
   echo "Managed server PID: not running"
 fi
 
-if [ -x "$(venv_python)" ]; then
-  PYTHON=$(venv_python)
-  echo "Venv Python: $PYTHON ($(python_version "$PYTHON"))"
+if [ -n "${POWERMEM_UV_BIN:-}" ] && command -v "$POWERMEM_UV_BIN" >/dev/null 2>&1; then
+  uv_bin=$(command -v "$POWERMEM_UV_BIN")
+elif command -v uv >/dev/null 2>&1; then
+  uv_bin=$(command -v uv)
 else
-  echo "Venv Python: missing"
+  uv_bin=""
+fi
+
+if [ -n "$uv_bin" ]; then
+  echo "uv: $uv_bin ($("$uv_bin" --version 2>/dev/null || echo unknown))"
+  echo "Backend launcher: uvx --from '${POWERMEM_INIT_PACKAGE:-powermem[server,seekdb]}' powermem-server"
+else
+  echo "uv: missing"
+fi
+
+if [ -d "$DATA_DIR/venv" ]; then
+  echo "Legacy venv: $DATA_DIR/venv (unused by uvx init)"
 fi
 
 if is_healthy "$base_url"; then

@@ -2,19 +2,16 @@
 # Select the correct native binary for macOS / Linux. Pass-through args (e.g. "poll" for file watcher).
 ROOT=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 PLUGIN_ROOT=$(CDPATH= cd -- "$ROOT/.." && pwd)
-if [ -n "${CLAUDE_PLUGIN_DATA:-}" ]; then
-  DATA_DIR=$CLAUDE_PLUGIN_DATA
-else
-  DATA_DIR="$HOME/.claude/plugins/data/memory-powermem-powermem"
-fi
-if [ -f "$DATA_DIR/runtime.env" ]; then
+DATA_DIR="${POWERMEM_DATA_DIR:-$HOME/.powermem}"
+load_env_file() {
+  [ -f "$1" ] || return 0
+  set -a
   # shellcheck disable=SC1090
-  . "$DATA_DIR/runtime.env"
-fi
-if [ -f "$PLUGIN_ROOT/config/runtime.env" ]; then
-  # shellcheck disable=SC1090
-  . "$PLUGIN_ROOT/config/runtime.env"
-fi
+  . "$1"
+  set +a
+}
+load_env_file "$DATA_DIR/runtime.env"
+load_env_file "$PLUGIN_ROOT/config/runtime.env"
 case "$(uname -s 2>/dev/null)" in
   Darwin) GOOS=darwin ;;
   Linux) GOOS=linux ;;
