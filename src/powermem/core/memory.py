@@ -801,6 +801,24 @@ class Memory(MemoryBase):
             provider = self.config.get(component, {}).get('provider')
             return provider if provider is not None else default
 
+    def _is_llm_disabled(self) -> bool:
+        """Return True when PowerMem is running without LLM-backed features."""
+        return self.llm_provider == "noop" or getattr(self.llm, "is_noop", False) is True
+
+    def _is_embedding_disabled(self) -> bool:
+        """Return True when embedding is explicitly disabled (EMBEDDING_PROVIDER=none)."""
+        return self.embedding_provider == "none" or getattr(self.embedding, "is_noop", False) is True
+
+    def _embed(self, text: str) -> Optional[List[float]]:
+        """Embed text, returning None when embedding is disabled or fails."""
+        if self._is_embedding_disabled():
+            return None
+        try:
+            return self.embedding.embed(text)
+        except Exception as e:
+            logger.warning("Embedding failed: %s", e)
+            return None
+
     def _get_component_config(self, component: str) -> Dict[str, Any]:
         """
         Helper method to get component configuration uniformly.
@@ -897,6 +915,10 @@ class Memory(MemoryBase):
         Returns:
             List of extracted facts
         """
+        if self._is_llm_disabled():
+            logger.info("LLM is disabled; skipping fact extraction.")
+            return []
+
         try:
             # Parse messages into conversation format
             conversation = parse_messages_for_facts(messages)
@@ -965,6 +987,10 @@ class Memory(MemoryBase):
         Returns:
             List of memory action dictionaries
         """
+        if self._is_llm_disabled():
+            logger.info("LLM is disabled; skipping memory action planning.")
+            return []
+
         try:
             if not new_facts:
                 logger.debug("No new facts to process")
@@ -1110,7 +1136,10 @@ class Memory(MemoryBase):
             )
 
             # Check if intelligent memory should be used
-            use_infer = infer and isinstance(messages, list) and len(messages) > 0
+            llm_disabled = self._is_llm_disabled()
+            use_infer = infer and isinstance(messages, list) and len(messages) > 0 and not llm_disabled
+            if infer and llm_disabled:
+                logger.info("LLM is disabled; falling back to simple add mode.")
 
             # If not using intelligent memory, fall back to simple mode
             if not use_infer:
@@ -1509,6 +1538,10 @@ class Memory(MemoryBase):
         """
         if not self.enable_graph:
             return None
+
+        if self._is_llm_disabled():
+            logger.info("LLM is disabled; skipping graph extraction.")
+            return None
         
         # Extract content from messages for graph processing
         if isinstance(messages, str):
@@ -1844,7 +1877,7 @@ class Memory(MemoryBase):
             })
 
             # Search in graph store
-            if self.enable_graph:
+            if self.enable_graph and not self._is_llm_disabled():
                 filters = {**(filters or {}), "user_id": user_id, "agent_id": agent_id, "run_id": run_id}
                 graph_results = self.graph_store.search(query, filters, limit)
                 return {"results": transformed_results, "relations": graph_results}
@@ -2697,7 +2730,7 @@ class Memory(MemoryBase):
                 mem_agent_id = agent_id or memory.get('agent_id')
                 
                 self.add(
-                    content=memory['content'],
+                    messages=memory['content'],
                     user_id=mem_user_id,
                     agent_id=mem_agent_id,
                     metadata=memory.get('metadata', {}),
@@ -3035,8 +3068,8 @@ class Memory(MemoryBase):
             if not safe:
                 return {"title": title, "action": "blocked", "reason": reason}
 
-        title_emb = title_embedding if title_embedding is not None else self.embedding.embed(title)
-        desc_emb = description_embedding if description_embedding is not None else self.embedding.embed(description)
+        title_emb = title_embedding if title_embedding is not None else self._embed(title)
+        desc_emb = description_embedding if description_embedding is not None else self._embed(description)
 
         similar = self.skill_store.search(
             query_embedding=title_emb, query_text=title,
@@ -3056,8 +3089,8 @@ class Memory(MemoryBase):
                 merged_desc = merge_result.get("description") or description
                 merged_proc = merge_result.get("procedure") or procedure
                 merged_tags = list(set((tags or []) + (existing.get("tags") or [])))
-                merged_title_emb = self.embedding.embed(merged_title)
-                merged_desc_emb = self.embedding.embed(merged_desc)
+                merged_title_emb = self._embed(merged_title)
+                merged_desc_emb = self._embed(merged_desc)
                 self.skill_store.update(
                     existing["id"], merged_title, merged_desc,
                     tags=merged_tags, procedure_data=merged_proc,
@@ -3079,7 +3112,7 @@ class Memory(MemoryBase):
         """Search skills by embedding + fulltext."""
         if not self.skill_store:
             return []
-        query_emb = self.embedding.embed(query)
+        query_emb = self._embed(query)
         return self.skill_store.search(
             query_embedding=query_emb, query_text=query,
             limit=limit, user_id=user_id, agent_id=agent_id,
