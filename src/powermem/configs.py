@@ -23,7 +23,46 @@ from powermem.storage.config.oceanbase import (
     OceanBaseConfig,
     OceanBaseGraphConfig,  # noqa: F401 — keeps OceanBase graph provider registered
 )
+from powermem.platform_defaults import default_database_provider
 from powermem.integrations.rerank.config.base import BaseRerankConfig
+
+
+def _default_vector_store_config() -> BaseVectorStoreConfig:
+    provider = default_database_provider()
+    if provider == "sqlite":
+        return SQLiteConfig()
+    if provider in ("postgres", "pgvector"):
+        from powermem.storage.config.pgvector import PGVectorConfig
+
+        return PGVectorConfig()
+    return OceanBaseConfig()
+
+
+def _is_disabled_graph_store_flag(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value is False
+    if isinstance(value, str):
+        return value.strip().lower() in {"false", "0", "no", "off", "disabled"}
+    if isinstance(value, int):
+        return value == 0
+    return False
+
+
+_GRAPH_STORE_WRAPPER_KEYS = {
+    "enabled",
+    "provider",
+    "config",
+}
+
+_GRAPH_STORE_METADATA_KEYS = {
+    "llm",
+    "custom_prompt",
+    "custom_extract_relations_prompt",
+    "custom_update_graph_prompt",
+    "custom_delete_relations_prompt",
+}
 
 
 class IntelligentMemoryConfig(BaseModel):
@@ -251,13 +290,13 @@ class MemoryConfig(BaseModel):
 
     vector_store: BaseVectorStoreConfig = Field(
         description=(
-            "Configuration for the vector store. Defaults to the OceanBase "
-            "provider with an empty host, which boots embedded seekdb on "
-            "disk (no separate server) so PowerMem starts with zero ops; "
-            "set OCEANBASE_HOST to point at a remote OceanBase cluster, or "
-            "switch the provider to sqlite / postgres."
+            "Configuration for the vector store. Defaults are platform-aware: "
+            "explicit DATABASE_PROVIDER wins; OCEANBASE_HOST selects remote "
+            "OceanBase; Linux with embedded SeekDB capability uses OceanBase "
+            "embedded mode; otherwise PowerMem falls back to SQLite for basic "
+            "local memory CRUD/search."
         ),
-        default_factory=OceanBaseConfig,
+        default_factory=_default_vector_store_config,
     )
     llm: BaseLLMConfig = Field(
         description="Configuration for the language model",
@@ -335,6 +374,31 @@ class MemoryConfig(BaseModel):
         description="Configuration for source store / fact-source linking (None means disabled)",
         default=None,
     )
+
+    @field_validator('graph_store', mode='before')
+    @classmethod
+    def resolve_graph_store(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, dict):
+            if not v:
+                return None
+            if _is_disabled_graph_store_flag(v.get('enabled')):
+                return None
+            if _GRAPH_STORE_WRAPPER_KEYS.intersection(v):
+                provider = str(v.get('provider') or 'oceanbase').lower()
+                config_dict = dict(v.get('config') or {})
+                for key in _GRAPH_STORE_METADATA_KEYS:
+                    if key in v and v[key] is not None:
+                        config_dict[key] = v[key]
+                config_cls = (
+                    BaseGraphStoreConfig.get_provider_config_cls(provider)
+                    or BaseGraphStoreConfig
+                )
+                return config_cls(**config_dict)
+        if _is_disabled_graph_store_flag(getattr(v, 'enabled', None)):
+            return None
+        return v
 
     @field_validator('sparse_embedder', mode='before')
     @classmethod

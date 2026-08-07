@@ -8,11 +8,77 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 echo "PowerMem Claude Code plugin init"
 echo "Data dir: $DATA_DIR"
 
+# --- Remote mode short-circuit ---
+# Triggered when the user provides a remote PowerMem server URL via
+# POWERMEM_INIT_BASE_URL (AskUserQuestion) or POWERMEM_BASE_URL (env, non-localhost).
+# Skips .env creation, uvx launch, PID management.
+# Connection mode (POWERMEM_INIT_CONNECTION_MODE=hook|mcp|both, default both)
+# decides which files get written:
+#   hook → runtime.env with URL + key; remove powermem from user-level mcpServers
+#   mcp  → user-level mcpServers only; runtime.env gets POWERMEM_HOOK_DISABLED=1
+#          so the hook launcher exits early instead of falling back to a stale URL
+#   both → both sources populated, hook enabled
+# MCP config is written to the user-scope config (~/.claude.json top-level
+# mcpServers) so it survives plugin reinstalls and applies to all projects.
+remote_init_url="${POWERMEM_INIT_BASE_URL:-${POWERMEM_BASE_URL:-}}"
+if [ -n "$remote_init_url" ] && is_remote_url "$remote_init_url"; then
+  remote_api_key="${POWERMEM_INIT_API_KEY:-${POWERMEM_API_KEY:-}}"
+  remote_mode="${POWERMEM_INIT_CONNECTION_MODE:-both}"
+  case "$remote_mode" in
+    hook|mcp|both) ;;
+    *) echo "ERROR: POWERMEM_INIT_CONNECTION_MODE must be hook, mcp, or both (got: $remote_mode)" >&2; exit 1 ;;
+  esac
+  echo "Remote server mode: $remote_init_url (connection: $remote_mode)"
+  mkdir -p "$DATA_DIR"
+
+  echo "Verifying connectivity..."
+  if ! is_healthy "$remote_init_url"; then
+    echo "ERROR: remote server at $remote_init_url is not healthy." >&2
+    echo "Check the URL and any required API key." >&2
+    exit 1
+  fi
+  echo "Remote server healthy: $remote_init_url"
+
+  case "$remote_mode" in
+    hook|both)
+      write_runtime_remote "$remote_init_url" "$remote_api_key"
+      echo "Wrote $RUNTIME_FILE"
+      ;;
+  esac
+
+  case "$remote_mode" in
+    mcp|both)
+      mcp_url=$(printf '%s' "$remote_init_url" | sed 's:/*$::')"/mcp"
+      write_user_mcp_config "$mcp_url" "$remote_api_key"
+      echo "Wrote powermem MCP server to user-scope config (url=$mcp_url)"
+      ;;
+  esac
+
+  case "$remote_mode" in
+    hook)
+      # Remove powermem from user-level mcpServers so MCP is disabled in
+      # hook-only mode. Other MCP servers are preserved.
+      remove_user_mcp_config
+      echo "Removed powermem from user-scope config (MCP disabled)"
+      ;;
+    mcp)
+      # Write a marker runtime.env so run-hook.sh exits early instead of
+      # falling back to a stale POWERMEM_BASE_URL. Without this, the hook
+      # binary would run with whatever URL was last configured.
+      write_runtime_hook_disabled
+      echo "Wrote $RUNTIME_FILE (hook disabled; MCP-only mode)"
+      ;;
+  esac
+
+  exit 0
+fi
+
 base_url=$(runtime_base_url)
 
 ensure_bootstrap_python || exit 1
 echo "Bootstrap Python: $BOOTSTRAP_PYTHON ($(python_version "$BOOTSTRAP_PYTHON"))"
 
+# Interactive configuration prompts.
 create_env_file() {
   "$BOOTSTRAP_PYTHON" - "$ENV_FILE" "$DATA_DIR" <<'PY'
 import json
@@ -249,11 +315,24 @@ if missing:
         print("Run init again with these environment variables set.", file=sys.stderr)
         sys.exit(2)
 
-embedding_provider = env_first("POWERMEM_INIT_EMBEDDING_PROVIDER", "EMBEDDING_PROVIDER") or "default"
+VALID_PROVIDERS = {"sqlite", "oceanbase"}
+db_provider = (env_first("POWERMEM_INIT_DATABASE_PROVIDER") or "sqlite").lower()
+if db_provider not in VALID_PROVIDERS:
+    print(f"Warning: unknown DATABASE_PROVIDER '{db_provider}', falling back to sqlite",
+          file=sys.stderr)
+    db_provider = "sqlite"
+
+# For the SQLite path, use huggingface (sentence-transformers, local, no API key)
+# instead of `default` which requires the seekdb extra.  OceanBase keeps `default`.
+_embedding_fallback = "huggingface" if db_provider == "sqlite" else "default"
+
+embedding_provider = env_first("POWERMEM_INIT_EMBEDDING_PROVIDER", "EMBEDDING_PROVIDER") or _embedding_fallback
 embedding_provider = embedding_provider.lower()
 
 embedding_model_defaults = {
+    "none": "none",
     "default": "all-MiniLM-L6-v2",
+    "huggingface": "all-MiniLM-L6-v2",
     "qwen": "text-embedding-v4",
     "openai": "text-embedding-3-small",
     "siliconflow": "BAAI/bge-m3",
@@ -261,7 +340,9 @@ embedding_model_defaults = {
     "lmstudio": "text-embedding-nomic-embed-text-v1.5",
 }
 embedding_dim_defaults = {
+    "none": "0",
     "default": "384",
+    "huggingface": "384",
     "qwen": "1536",
     "openai": "1536",
     "siliconflow": "1024",
@@ -285,7 +366,7 @@ if not embedding_api_key:
     elif embedding_provider == "siliconflow":
         embedding_api_key = env_first("SILICONFLOW_API_KEY") or settings_first(settings_env, "SILICONFLOW_API_KEY")
 
-if embedding_provider not in {"default", "ollama", "lmstudio"} and not embedding_api_key:
+if embedding_provider not in {"none", "default", "huggingface", "ollama", "lmstudio"} and not embedding_api_key:
     print(
         "Missing configuration: POWERMEM_INIT_EMBEDDING_API_KEY "
         f"for EMBEDDING_PROVIDER={embedding_provider}",
@@ -299,31 +380,45 @@ server_workers = env_first("POWERMEM_SERVER_WORKERS") or "1"
 server_log_file = env_first("POWERMEM_SERVER_LOG_FILE") or path_value("powermem-server.log")
 logging_level = env_first("LOGGING_LEVEL") or "INFO"
 
+if db_provider == "sqlite":
+    db_lines = [
+        "# Database: SQLite (lightweight, no external service required)",
+        "DATABASE_PROVIDER=sqlite",
+        f"SQLITE_PATH={path_value('powermem.db')}",
+        "SQLITE_COLLECTION=memories",
+        "SQLITE_ENABLE_WAL=true",
+        "SQLITE_TIMEOUT=30",
+    ]
+else:
+    db_lines = [
+        "# Database: embedded seekdb through the OceanBase provider",
+        "DATABASE_PROVIDER=oceanbase",
+        "OCEANBASE_HOST=",
+        f"OCEANBASE_PATH={path_value('seekdb_data')}",
+        "OCEANBASE_PORT=2881",
+        "OCEANBASE_USER=root@sys",
+        "OCEANBASE_PASSWORD=",
+        "OCEANBASE_DATABASE=powermem",
+        "OCEANBASE_COLLECTION=memories",
+        "OCEANBASE_INDEX_TYPE=HNSW",
+        "OCEANBASE_VECTOR_METRIC_TYPE=cosine",
+        f"OCEANBASE_EMBEDDING_MODEL_DIMS={embedding_dims}",
+        "OCEANBASE_TEXT_FIELD=document",
+        "OCEANBASE_VECTOR_FIELD=embedding",
+        "OCEANBASE_PRIMARY_FIELD=id",
+        "OCEANBASE_METADATA_FIELD=metadata",
+        "OCEANBASE_VIDX_NAME=memories_vidx",
+        "OCEANBASE_INCLUDE_SPARSE=false",
+        "OCEANBASE_ENABLE_NATIVE_HYBRID=false",
+    ]
+
 lines = [
     "# Generated by the PowerMem Claude Code plugin.",
     "",
     "# Core paths",
     f"POWERMEM_DATA_DIR={data_dir}",
     "",
-    "# Database: embedded seekdb through the OceanBase provider",
-    "DATABASE_PROVIDER=oceanbase",
-    "OCEANBASE_HOST=",
-    f"OCEANBASE_PATH={path_value('seekdb_data')}",
-    "OCEANBASE_PORT=2881",
-    "OCEANBASE_USER=root@sys",
-    "OCEANBASE_PASSWORD=",
-    "OCEANBASE_DATABASE=powermem",
-    "OCEANBASE_COLLECTION=memories",
-    "OCEANBASE_INDEX_TYPE=HNSW",
-    "OCEANBASE_VECTOR_METRIC_TYPE=cosine",
-    f"OCEANBASE_EMBEDDING_MODEL_DIMS={embedding_dims}",
-    "OCEANBASE_TEXT_FIELD=document",
-    "OCEANBASE_VECTOR_FIELD=embedding",
-    "OCEANBASE_PRIMARY_FIELD=id",
-    "OCEANBASE_METADATA_FIELD=metadata",
-    "OCEANBASE_VIDX_NAME=memories_vidx",
-    "OCEANBASE_INCLUDE_SPARSE=false",
-    "OCEANBASE_ENABLE_NATIVE_HYBRID=false",
+    *db_lines,
     "",
     "# LLM",
     f"LLM_PROVIDER={provider}",
@@ -352,6 +447,10 @@ lines.extend(
 )
 if embedding_api_key:
     lines.append(f"EMBEDDING_API_KEY={embedding_api_key}")
+# Note: do NOT write HF_HUB_OFFLINE=1 here. PowerMem's HuggingFaceEmbedding
+# manages offline behaviour itself via SentenceTransformer(local_files_only=True)
+# and runs an internal ModelScope/HF download when the cache is empty. Forcing
+# HF_HUB_OFFLINE=1 globally would block that download for non-CN users.
 
 embedding_base_override = env_first("POWERMEM_INIT_EMBEDDING_BASE_URL", "EMBEDDING_BASE_URL")
 embedding_base_keys = {
@@ -403,7 +502,7 @@ lines.extend(
 env_path.parent.mkdir(parents=True, exist_ok=True)
 env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 print(
-    f"Wrote {env_path} with llm_provider={provider}, llm_model={model}, "
+    f"Wrote {env_path} with db_provider={db_provider}, llm_provider={provider}, llm_model={model}, "
     f"embedding_provider={embedding_provider}, embedding_model={embedding_model}, "
     f"embedding_dims={embedding_dims}, server_port={server_port}"
 )
@@ -603,7 +702,27 @@ if ! validate_llm_config; then
   exit 1
 fi
 
-PACKAGE=${POWERMEM_INIT_PACKAGE:-powermem[server,seekdb]}
+db_provider=$(grep '^DATABASE_PROVIDER=' "$ENV_FILE" 2>/dev/null \
+  | cut -d= -f2 | tr -d '[:space:]')
+db_provider="${db_provider:-sqlite}"
+case "$db_provider" in
+  oceanbase) PACKAGE="${POWERMEM_INIT_PACKAGE:-powermem[server,seekdb]}" ;;
+  *)         PACKAGE="${POWERMEM_INIT_PACKAGE:-powermem[server,extras]}" ;;
+esac
+
+# For SQLite backend: probe FTS5/JSON1 support via the bootstrap Python and,
+# if the bundled SQLite is too old (< 3.9.0), inject pysqlite3-binary into
+# the uvx invocation so PowerMem gets a modern SQLite at runtime.
+UVX_WITH_ARGS=""
+if [ "$db_provider" != "oceanbase" ]; then
+  _sqlite_ok=$("$BOOTSTRAP_PYTHON" -c \
+    "import sqlite3; print(sqlite3.sqlite_version_info >= (3,9,0))" 2>/dev/null || echo False)
+  if [ "$_sqlite_ok" != "True" ]; then
+    _sys_ver=$("$BOOTSTRAP_PYTHON" -c 'import sqlite3; print(sqlite3.sqlite_version)' 2>/dev/null || echo unknown)
+    echo "System SQLite $_sys_ver < 3.9.0; injecting pysqlite3-binary into uvx invocation."
+    UVX_WITH_ARGS="--with pysqlite3-binary"
+  fi
+fi
 
 if pid_alive; then
   echo "Managed PowerMem server process is running: $(managed_pid)"
@@ -664,12 +783,14 @@ if [ -n "${POWERMEM_UV_INDEX_URL:-}" ]; then
     --python "$BOOTSTRAP_PYTHON" \
     --default-index "$POWERMEM_UV_INDEX_URL" \
     --from "$PACKAGE" \
-    powermem-server --host 127.0.0.1 --port "$port" >> "$LOG_FILE" 2>&1 &
+    $UVX_WITH_ARGS \
+    powermem-server --host "${POWERMEM_SERVER_HOST:-127.0.0.1}" --port "$port" >> "$LOG_FILE" 2>&1 &
 else
   POWERMEM_ENV_FILE="$ENV_FILE" nohup "$UV_BIN" tool run \
     --python "$BOOTSTRAP_PYTHON" \
     --from "$PACKAGE" \
-    powermem-server --host 127.0.0.1 --port "$port" >> "$LOG_FILE" 2>&1 &
+    $UVX_WITH_ARGS \
+    powermem-server --host "${POWERMEM_SERVER_HOST:-127.0.0.1}" --port "$port" >> "$LOG_FILE" 2>&1 &
 fi
 pid=$!
 write_managed_pid "$pid"

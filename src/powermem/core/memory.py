@@ -16,7 +16,8 @@ from powermem.utils.utils import get_current_datetime
 from copy import deepcopy
 
 from .base import MemoryBase
-from ..configs import MemoryConfig
+from ..configs import MemoryConfig, _is_disabled_graph_store_flag
+from ..platform_defaults import default_database_provider
 from ..integrations.embeddings.config.sparse_base import BaseSparseEmbedderConfig
 from ..storage.factory import VectorStoreFactory, GraphStoreFactory
 from ..storage.adapter import StorageAdapter, SubStorageAdapter
@@ -254,6 +255,14 @@ class _HTTPMemoryClient:
         run_id: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
         limit: int = 30,
+        threshold: Optional[float] = None,
+        retrieval_mode: str = "auto",
+        fusion: str = "rrf",
+        vector_weight: Optional[float] = None,
+        fts_weight: Optional[float] = None,
+        rrf_k: int = 60,
+        candidate_limit: Optional[int] = None,
+        include_explanation: bool = False,
         **_: Any,
     ) -> Dict[str, Any]:
         data = self._request(
@@ -266,6 +275,14 @@ class _HTTPMemoryClient:
                 "run_id": run_id,
                 "filters": filters,
                 "limit": limit,
+                "threshold": threshold,
+                "retrieval_mode": retrieval_mode,
+                "fusion": fusion,
+                "vector_weight": vector_weight,
+                "fts_weight": fts_weight,
+                "rrf_k": rrf_k,
+                "candidate_limit": candidate_limit,
+                "include_explanation": include_explanation,
             },
         )
         results = data.get("results", []) if isinstance(data, dict) else []
@@ -481,13 +498,13 @@ def _auto_convert_config(config: Dict[str, Any]) -> Dict[str, Any]:
         if "database" in config:
             db_config = config["database"]
             converted["vector_store"] = {
-                "provider": db_config.get("provider", "oceanbase"),
+                "provider": db_config.get("provider", default_database_provider()),
                 "config": db_config.get("config", {})
             }
             converted.pop("database", None)
         elif "vector_store" not in converted:
             converted["vector_store"] = {
-                "provider": "oceanbase",
+                "provider": default_database_provider(),
                 "config": {}
             }
         
@@ -584,7 +601,7 @@ class Memory(MemoryBase):
             logger.debug(f"Timezone set from config: {timezone_config}")
         
         # Extract providers from config with fallbacks
-        self.storage_type = storage_type or self._get_provider('vector_store', 'oceanbase')
+        self.storage_type = storage_type or self._get_provider('vector_store', default_database_provider())
         self.llm_provider = llm_provider or self._get_provider('llm', 'mock')
         self.embedding_provider = embedding_provider or self._get_provider('embedder', 'mock')
 
@@ -807,7 +824,10 @@ class Memory(MemoryBase):
 
     def _is_embedding_disabled(self) -> bool:
         """Return True when embedding is explicitly disabled (EMBEDDING_PROVIDER=none)."""
-        return self.embedding_provider == "none" or getattr(self.embedding, "is_noop", False) is True
+        return (
+            getattr(self, "embedding_provider", None) == "none"
+            or getattr(getattr(self, "embedding", None), "is_noop", False) is True
+        )
 
     def _embed(self, text: str) -> Optional[List[float]]:
         """Embed text, returning None when embedding is disabled or fails."""
@@ -844,11 +864,15 @@ class Memory(MemoryBase):
         Returns:
             Boolean indicating whether graph store is enabled
         """
+        graph_store_config = self.config.get('graph_store', {})
+        if isinstance(graph_store_config, dict) and 'enabled' in graph_store_config:
+            enabled_value = graph_store_config.get('enabled')
+            return bool(enabled_value) and not _is_disabled_graph_store_flag(enabled_value)
+
         if self.memory_config:
             # graph_store is None means disabled, otherwise enabled
             return self.memory_config.graph_store is not None
         else:
-            graph_store_config = self.config.get('graph_store', {})
             # Support both old format (dict with 'enabled') and new format (config object)
             if isinstance(graph_store_config, dict):
                 return graph_store_config.get('enabled', False) if graph_store_config else False
@@ -1700,6 +1724,13 @@ class Memory(MemoryBase):
         filters: Optional[Dict[str, Any]] = None,
         limit: int = 30,
         threshold: Optional[float] = None,
+        retrieval_mode: str = "auto",
+        fusion: str = "rrf",
+        vector_weight: Optional[float] = None,
+        fts_weight: Optional[float] = None,
+        rrf_k: int = 60,
+        candidate_limit: Optional[int] = None,
+        include_explanation: bool = False,
     ) -> Dict[str, Any]:
         """Search for memories.
         
@@ -1727,6 +1758,13 @@ class Memory(MemoryBase):
                     filters=filters,
                     limit=limit,
                     threshold=threshold,
+                    retrieval_mode=retrieval_mode,
+                    fusion=fusion,
+                    vector_weight=vector_weight,
+                    fts_weight=fts_weight,
+                    rrf_k=rrf_k,
+                    candidate_limit=candidate_limit,
+                    include_explanation=include_explanation,
                 )
 
             if not query or not query.strip():
@@ -1738,8 +1776,23 @@ class Memory(MemoryBase):
             # Select embedding service based on filters (for sub-store routing)
             embedding_service = self._get_embedding_service(filters)
 
-            # Generate query embedding
-            query_embedding = embedding_service.embed(query, memory_action="search")
+            query_embedding = None
+            if retrieval_mode != "fts":
+                if self._is_embedding_disabled():
+                    return {
+                        "results": [],
+                        "relations": []
+                    }
+                try:
+                    query_embedding = embedding_service.embed(
+                        query, memory_action="search"
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Search embedding failed; falling back to text search "
+                        "when available: %s",
+                        exc,
+                    )
             
 
             # Search in storage - pass query text to enable hybrid search
@@ -1752,6 +1805,13 @@ class Memory(MemoryBase):
                 limit=limit,
                 query=query,  # Pass query text for hybrid search (vector + full-text + sparse vector)
                 threshold=threshold,  # Pass threshold to storage for native hybrid search condition check
+                retrieval_mode=retrieval_mode,
+                fusion=fusion,
+                vector_weight=vector_weight,
+                fts_weight=fts_weight,
+                rrf_k=rrf_k,
+                candidate_limit=candidate_limit,
+                include_explanation=include_explanation,
             )
             
             # Process results with intelligence manager (only if enabled to avoid unnecessary calls)
@@ -1805,7 +1865,9 @@ class Memory(MemoryBase):
                 # Quality score represents absolute similarity quality (0-1 range)
                 # It's calculated from weighted average of all search paths' similarity scores
                 metadata = result.get("metadata", {})
-                quality_score = metadata.get("_quality_score")
+                quality_score = result.get("_quality_score")
+                if quality_score is None:
+                    quality_score = metadata.get("_quality_score")
 
                 # If quality_score is not available (e.g., from older data or non-hybrid search),
                 # fall back to using the ranking score
@@ -1819,7 +1881,7 @@ class Memory(MemoryBase):
                 
                 transformed_result = {
                     "memory": result.get("memory", ""),
-                    "metadata": metadata,  # Keep metadata as-is from storage (includes debug info like _quality_score)
+                    "metadata": metadata,
                     "score": score,
                 }
                 # Preserve other fields if needed

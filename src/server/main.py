@@ -30,9 +30,9 @@ logger = logging.getLogger("server")
 
 
 def _load_mcp_asgi_app():
-    """Return streamable HTTP MCP ASGI app when powermem[mcp] is installed."""
+    """Return streamable HTTP MCP ASGI app when powermem[server] is installed."""
     if find_spec("fastmcp") is None:
-        logger.warning("MCP extras not installed; /mcp endpoint disabled")
+        logger.warning("MCP server dependencies not installed; /mcp endpoint disabled")
         return None
 
     try:
@@ -40,7 +40,9 @@ def _load_mcp_asgi_app():
 
         return mcp.http_app(path="/mcp", transport="streamable-http")
     except ImportError as exc:
-        logger.warning("MCP extras not installed; /mcp endpoint disabled: %s", exc)
+        logger.warning(
+            "MCP server dependencies not installed; /mcp endpoint disabled: %s", exc
+        )
         return None
 
 
@@ -56,18 +58,40 @@ async def _service_lifespan(app: FastAPI):
     from .services.agent_service import AgentService
 
     logger.info("Initializing service singletons...")
+    app.state.memory_service = None
+    app.state.search_service = None
+    app.state.user_service = None
+    app.state.agent_service = None
+    app.state.service_ready = False
+    app.state.service_startup_error = None
+    app.state.storage_type = None
+    app.state.storage_capabilities = None
     try:
+        from powermem.platform_defaults import (
+            database_provider_explicitly_configured,
+            sqlite_capability_warning,
+            storage_capabilities,
+        )
+
         app.state.memory_service = MemoryService()
         app.state.search_service = SearchService()
         app.state.user_service = UserService()
         app.state.agent_service = AgentService()
+        storage_type = getattr(app.state.memory_service.memory, "storage_type", None)
+        app.state.storage_type = storage_type
+        defaulted = not database_provider_explicitly_configured()
+        app.state.storage_capabilities = storage_capabilities(
+            storage_type or "",
+            defaulted=defaulted,
+        )
+        warning = sqlite_capability_warning(storage_type or "", defaulted=defaulted)
+        if warning:
+            logger.warning("PowerMem is running with SQLite storage. %s", warning)
+        app.state.service_ready = True
         logger.info("Service singletons initialized")
     except Exception as e:
         logger.error(f"Failed to initialize service singletons: {e}", exc_info=True)
-        app.state.memory_service = None
-        app.state.search_service = None
-        app.state.user_service = None
-        app.state.agent_service = None
+        app.state.service_startup_error = str(e)
 
     yield
 
@@ -130,7 +154,7 @@ if dashboard_assets_available():
 # Include API routers
 app.include_router(v1_router)
 
-# Streamable HTTP MCP on the same port as the REST API (requires powermem[mcp])
+# Streamable HTTP MCP on the same port as the REST API (requires powermem[server])
 if mcp_asgi_app is not None:
     app.mount("", mcp_asgi_app)
     logger.info("Mounted PowerMem MCP at /mcp")

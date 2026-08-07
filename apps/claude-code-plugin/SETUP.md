@@ -26,13 +26,16 @@ do not run `claude plugin install`, and do not build the dashboard. The plugin i
 already installed; this section only prepares the PowerMem backend that the plugin
 connects to.
 
-Installed-plugin init ensures `uv` is available, then starts the backend with the
-uvx-style launcher `uvx --from 'powermem[server,seekdb]' powermem-server`. It does
-not create a plugin-local venv. Therefore the PyPI release used by this flow must
-already contain the backend capabilities required by the plugin, including the
-local embedding dependencies. If the user is validating a plugin change that
-depends on unpublished backend code, use `POWERMEM_INIT_PACKAGE` to pass that
-exact Git branch or commit to `uvx --from` instead of the PyPI package.
+Installed-plugin init ensures `uv` is available, then starts the backend with
+the uvx-style launcher. The package spec depends on the storage backend: the
+default SQLite path uses `powermem[server,extras]` (pulls `sentence-transformers`
+for the local `huggingface` embedder), while the OceanBase path uses
+`powermem[server,seekdb]`. It does not create a plugin-local venv. Therefore the
+PyPI release used by this flow must already contain the backend capabilities
+required by the plugin, including the local embedding dependencies. If the user
+is validating a plugin change that depends on unpublished backend code, use
+`POWERMEM_INIT_PACKAGE` to pass that exact Git branch or commit to `uvx --from`
+instead of the PyPI package.
 
 Installed-plugin init is idempotent and uses plugin-local state:
 
@@ -63,7 +66,10 @@ sh "$CLAUDE_PLUGIN_ROOT/scripts/..."
    first, then retry `/memory-powermem:init`.
 2. Run `sh "$CLAUDE_PLUGIN_ROOT/scripts/status.sh"` and inspect whether config,
    uv, managed PID, Python versions, and health are present.
-3. If `.env` is missing, run init with auto-detection first:
+3. **If the server is healthy and `.env` exists** — tell the user the current
+   storage backend (read `DATABASE_PROVIDER` from `.env`). Do not re-run `init.sh`.
+   If the user wants to reconfigure, stop the server first, then proceed.
+4. If `.env` is missing, run init with auto-detection first:
 
    ```bash
    sh "$CLAUDE_PLUGIN_ROOT/scripts/init.sh"
@@ -75,10 +81,12 @@ sh "$CLAUDE_PLUGIN_ROOT/scripts/..."
    `ANTHROPIC_BASE_URL`. It also reads `ANTHROPIC_MODEL` from the environment.
    If the environment does not provide a complete config, it falls back to
    `~/.claude/settings.json` using the same Anthropic keys. It writes the
-   plugin-local `.env` with the full PowerMem backend defaults: embedded
-   OceanBase/seekdb storage, local default embedding, server settings, and logging
+   plugin-local `.env` with the full PowerMem backend defaults: SQLite storage
+   (default for coding agent; set `POWERMEM_INIT_DATABASE_PROVIDER=oceanbase` for
+   OceanBase/seekdb production use), local HuggingFace embedding (no API key,
+   `sentence-transformers` from `powermem[extras]`), server settings, and logging
    settings.
-4. If init reports missing values, ask the user only for those missing values. Do
+5. If init reports missing values, ask the user only for those missing values. Do
    not invent credentials. Re-run init with the matching environment variables:
 
    ```bash
@@ -99,26 +107,30 @@ sh "$CLAUDE_PLUGIN_ROOT/scripts/..."
    ```
 
    Optional variables:
+   - `POWERMEM_INIT_DATABASE_PROVIDER`: storage backend — `sqlite` (default, coding
+     agent) or `oceanbase` (production/cluster). Invalid values fall back to `sqlite`.
    - `POWERMEM_INIT_LLM_BASE_URL` for a custom provider gateway.
    - `POWERMEM_INIT_PACKAGE` to test unpublished backend code through
-     `uvx --from` instead of PyPI `powermem`, for example
-     `powermem[server,seekdb] @ git+https://github.com/oceanbase/powermem.git@<branch-or-sha>`.
+     `uvx --from` instead of PyPI `powermem`. Match the extras to the storage
+     backend: `powermem[server,extras]` for SQLite (default, includes
+     `sentence-transformers`), `powermem[server,seekdb]` for OceanBase. Example:
+     `powermem[server,extras] @ git+https://github.com/oceanbase/powermem.git@<branch-or-sha>`.
    - `POWERMEM_INIT_PYTHON` to force a specific Python >= 3.11.
    - `POWERMEM_INIT_PORT` to force the managed server port.
-   - `POWERMEM_INIT_PRELOAD_MODEL=1` to pre-download the default local
-     `all-MiniLM-L6-v2` embedding model before starting the server.
-5. Never print API keys, auth tokens, or other credentials. Mask any secret in
+6. Never print API keys, auth tokens, or other credentials. Mask any secret in
    summaries.
-6. After init succeeds, run `sh "$CLAUDE_PLUGIN_ROOT/scripts/status.sh"` again and
+7. After init succeeds, run `sh "$CLAUDE_PLUGIN_ROOT/scripts/status.sh"` again and
    report the base URL.
-7. The hook launcher reads `runtime.env`, so once init writes a base URL, prompt
+8. The hook launcher reads `runtime.env`, so once init writes a base URL, prompt
    recall and session-save hooks use that backend automatically.
 
-Installed-plugin model preload uses `uvx --from modelscope python` to download
-from **ModelScope**, then bridges the files into the HuggingFace hub cache layout.
-Do NOT use `sentence_transformers.SentenceTransformer(...)` for preload; it starts
-model initialization instead of just populating the cache and can hang on networks
-where HuggingFace is blocked.
+The default local embedding model (`all-MiniLM-L6-v2`) is downloaded
+automatically by PowerMem at startup — cache hit loads from disk via
+`SentenceTransformer(local_files_only=True)`; cache miss on CN networks
+downloads through ModelScope and bridges into the HuggingFace hub cache;
+cache miss elsewhere downloads from HuggingFace with a 30s timeout.
+`POWERMEM_INIT_PRELOAD_MODEL` is deprecated and now a no-op; init prints a
+deprecation message if it is set.
 
 If startup fails with `No module named 'sentence_transformers'`, the backend
 package resolved by `uvx --from` does not include the local embedding dependency.
@@ -169,8 +181,9 @@ state and either skip, reuse, or refresh it instead of failing or duplicating wo
 1. DETECT CONTEXT. The current directory is the PowerMem source tree if a
    pyproject.toml here has name = "powermem" (or src/powermem/ and
    apps/claude-code-plugin/ both exist). Tell me which path you will take:
-     - SOURCE  -> build & deploy from this checkout and install the Claude Code
-                  plugin GLOBALLY in HTTP mode (hooks -> REST; needs Go 1.22+).
+    - SOURCE  -> deploy from this checkout and install the Claude Code plugin
+                 GLOBALLY in HTTP mode (hooks -> REST; rebuild hook binaries
+                 only when refreshing them from source changes).
      - PYPI/MCP -> install PowerMem from PyPI with uv and connect via the
                    powermem-mcp server (the plugin itself is NOT on PyPI).
 
@@ -236,17 +249,18 @@ writing. Never silently patch `.env`.**
       dependencies, etc.
 
    c. **All four package install locations** affected by (a)-(b):
-      1. `uv pip install --python "$POWERMEM_PYTHON" -e '.[server,mcp,seekdb]'`
+      1. `uv pip install --python "$POWERMEM_PYTHON" -e '.[server,seekdb]'`
       2. `uv pip install --python "$POWERMEM_PYTHON" -q modelscope`
-      3. `uv pip install --python "$POWERMEM_PYTHON" "powermem[mcp,seekdb]"`
+      3. `uv pip install --python "$POWERMEM_PYTHON" "powermem[server,seekdb]"`
       4. `uv pip install --python "$POWERMEM_PYTHON" -q huggingface_hub`
 
 2. COLLECT CONFIG (idempotent). If a .env already exists in the working directory
    with LLM_PROVIDER / LLM_API_KEY or LLM_AUTH_TOKEN / LLM_MODEL set to real
    values (not placeholders
    like `your_api_key_here`), REUSE it — skip directly to step 3a/3b. Only collect
-   what is missing. Use zero-config defaults for everything else (storage = embedded
-   seekdb, embedder = local all-MiniLM-L6-v2) unless I say otherwise.
+   what is missing. Use zero-config defaults for everything else (storage =
+   platform-aware: embedded SeekDB on supported Linux installs, otherwise SQLite
+   basic mode; embedder = local all-MiniLM-L6-v2) unless I say otherwise.
 
    **2a. Auto-detect or manual?** Use AskUserQuestion (single-select):
 
@@ -346,12 +360,13 @@ writing. Never silently patch `.env`.**
       uv venv venv --python python3.11
       POWERMEM_PYTHON="$(pwd)/venv/bin/python"
       export PATH="$(pwd)/venv/bin:$PATH"
-      uv pip install --python "$POWERMEM_PYTHON" -e '.[server,mcp,seekdb]'
+      uv pip install --python "$POWERMEM_PYTHON" -e '.[server,seekdb]'
       ```
-      ⚠️ All three extras are required: `[server]` adds fastapi/uvicorn; `[mcp]` adds
-      fastmcp, which is checked at import time and calls sys.exit(1) if missing —
-      this kills the HTTP server before it can start even in HTTP-only mode;
-      `[seekdb]` adds the embedded seekdb storage backend (default).
+      ⚠️ Both extras are required: `[server]` adds fastapi/uvicorn and
+      fastmcp for the HTTP API plus MCP transports;
+      `[seekdb]` adds the embedded seekdb storage backend. Platforms where
+      embedded SeekDB is unavailable default to SQLite basic mode; use
+      OceanBase/SeekDB for the full capability stack.
     - Immediately after `uv pip install`, detect which Python interpreter was used. Read
       the shebang from the freshly-installed `powermem-server` entry point — this is
       the only reliable way to guarantee that the model-download script, the uv call
@@ -413,10 +428,12 @@ writing. Never silently patch `.env`.**
       immediately (do NOT wait for it — model download starts in parallel too):
         make build-dashboard >> /tmp/powermem-dashboard-build.log 2>&1 &
         DASHBOARD_BUILD_PID=$!
-    - Build the hook binaries FIRST — they get copied into Claude's plugin cache at
-      install time, so they must exist on disk before step "install":
-        if Go 1.22+ is present:  make build-claude-hook
-        else tell me, and offer to install Go or fall back to the PYPI/MCP path below.
+    - Confirm the hook binaries are present before install, because they get copied
+      into Claude's plugin cache at install time:
+        normal Git/marketplace install: use the committed hooks/bin/ binaries.
+        if hook source changed and Go 1.22+ is present:  make build-claude-hook
+        if refreshed binaries are needed but Go is absent: offer to install Go or
+        fall back to the PYPI/MCP path below.
     - Ensure the plugin's root .mcp.json stays empty ({}) — default HTTP mode.
     - STAGE the plugin into a stable, Claude-owned location so the marketplace does
       NOT depend on this checkout — you can move or delete the repo afterwards and
@@ -426,8 +443,8 @@ writing. Never silently patch `.env`.**
         mkdir -p "$DEST"
         rsync -a --delete "<ABS_PATH>/apps/claude-code-plugin/" "$DEST/"
           # no rsync? rm -rf "$DEST" && cp -a "<ABS_PATH>/apps/claude-code-plugin/." "$DEST/"
-      The binaries from `make build-claude-hook` must already be on disk before this
-      copy. Re-copy on every re-run so the staged dir tracks your latest build.
+      The committed `hooks/bin/` binaries are already on disk before this copy.
+      Re-copy on every re-run so the staged dir tracks your latest build.
     - Register the marketplace from the STAGED dir (it ships
       .claude-plugin/marketplace.json) — never from the repo:
         claude plugin marketplace add "$DEST"
@@ -489,11 +506,11 @@ writing. Never silently patch `.env`.**
       now; every `claude` and `claude -p` loads it automatically.
 
 3b. PYPI/MCP path:
-    - Install the MCP extra in the environment that Claude will use, then:
+    - Install the server extra in the environment that Claude will use, then:
       uv venv venv --python python3.11
       POWERMEM_PYTHON="$(pwd)/venv/bin/python"
       export PATH="$(pwd)/venv/bin:$PATH"
-      uv pip install --python "$POWERMEM_PYTHON" "powermem[mcp,seekdb]"
+      uv pip install --python "$POWERMEM_PYTHON" "powermem[server,seekdb]"
       powermem-mcp --help
     - Register the MCP server globally so it persists across sessions (stdio = no
       port), run from the directory holding the .env. Idempotent: if `claude mcp get
@@ -599,7 +616,7 @@ writing. Never silently patch `.env`.**
    (~/.claude/marketplaces/powermem — independent of this repo), the server URL,
    how memory is wired
    (HTTP hooks vs MCP tools — recall is auto-injected on UserPromptSubmit, not a
-   tool the model calls; writes happen on SessionEnd/PostCompact), confirmation that
+   tool the model calls; writes happen on configured hook events), confirmation that
    it is enabled globally, and the fact that I just run `claude` (or `claude -p`)
    with nothing extra. Note: the background server does not survive a reboot — offer
    to set up a systemd user service for autostart.
@@ -639,13 +656,19 @@ and their resolutions discovered during actual setup attempts:
 ```bash
 uv venv venv --python python3.11
 source venv/bin/activate
-uv pip install --python "$VIRTUAL_ENV/bin/python" -e '.[server,seekdb]'
+# Use the extras matching your storage backend:
+#   SQLite (default):  .[server,extras]   (pulls sentence-transformers)
+#   OceanBase:         .[server,seekdb]
+uv pip install --python "$VIRTUAL_ENV/bin/python" -e '.[server,extras]'
 ```
 
 #### [E002] Missing Server Dependencies
 **Problem**: Server startup fails with missing packages
-**Fix**: Install missing dependencies
+**Fix**: Install missing dependencies with the extras matching your backend
 ```bash
+# SQLite (default)
+uv pip install --python "$POWERMEM_PYTHON" 'powermem[server,extras]'
+# OceanBase
 uv pip install --python "$POWERMEM_PYTHON" 'powermem[server,seekdb]'
 ```
 
@@ -668,14 +691,17 @@ make build-claude-hook
 
 #### [E005] Storage Backend Initialization
 **Problem**: 503 errors on API calls despite server health
-**Fix**: the Claude Code plugin defaults to embedded OceanBase/seekdb. Stop the
-managed server, remove stale seekdb data only if you accept deleting local memories, and
+**Fix**: the Claude Code plugin defaults to local SQLite. Stop the managed
+server, remove stale SQLite data only if you accept deleting local memories, and
 restart init:
 ```bash
 sh "$CLAUDE_PLUGIN_ROOT/scripts/stop.sh"
-rm -rf "$HOME/.powermem/seekdb_data"
+rm -f "$HOME/.powermem/powermem.db" "$HOME/.powermem/powermem.db-"*
 sh "$CLAUDE_PLUGIN_ROOT/scripts/init.sh"
 ```
+If you explicitly set `POWERMEM_INIT_DATABASE_PROVIDER=oceanbase`, use the
+OceanBase/seekdb troubleshooting path instead and remove `seekdb_data` only when
+data loss is acceptable.
 
 #### [E006] Model Download Timeout
 **Problem**: Server hangs or reports "timed out thrown while requesting HEAD" on startup.
@@ -733,12 +759,12 @@ resets initialization and makes startup take even longer.
 
 #### [E009] Server Exits Immediately — `fastapi`, `uvicorn`, or `fastmcp` Missing
 **Problem**: Server exits immediately after launch with "Missing dependencies" error.
-**Cause**: installing only the base project skips optional server/MCP dependencies. `fastmcp` is checked
-at **import time** and calls `sys.exit(1)` if absent — `try/except` cannot catch this,
-so even the HTTP-only server is killed before it starts.
+**Cause**: installing only the base project skips optional server dependencies.
+`powermem[server]` installs fastapi, uvicorn, and fastmcp for the HTTP API plus
+MCP transports.
 **Fix**:
 ```bash
-uv pip install --python "$POWERMEM_PYTHON" -e '.[server,mcp,seekdb]'
+uv pip install --python "$POWERMEM_PYTHON" -e '.[server,seekdb]'
 ```
 
 #### [E010] Anthropic `temperature` + `top_p` both sent → 400
@@ -844,8 +870,9 @@ python -c "import pyseekdb" 2>&1    # should produce no output
 ## PRE-CHECK & PREREQUISITES
 
 1. **Verify Python version**: `python3 --version` (must be >= 3.11, see [E011])
-2. **Verify Go version**: `go version` (must be 1.22+)
-3. **Verify uv**: `uv --version` (install it with [E012] if missing)
+2. **Verify uv**: `uv --version` (install it with [E012] if missing)
+3. **Verify hook binaries**: committed `hooks/bin/` binaries should already be present;
+   Go 1.22+ is only needed when refreshing them from hook source changes.
 4. **Check mirror access**: if using an internal mirror, verify
    it has `pyobvector`, `pyseekdb`, and `onnxruntime`; see [E013] if not.
 
@@ -861,10 +888,11 @@ source venv/bin/activate
 POWERMEM_PYTHON="$VIRTUAL_ENV/bin/python"
 
 # Install everything with ALL required extras
-uv pip install --python "$POWERMEM_PYTHON" -e '.[server,mcp,seekdb]'
+uv pip install --python "$POWERMEM_PYTHON" -e '.[server,seekdb]'
 
-# Build and stage Claude hooks
-make build-claude-hook
+# Git/marketplace installs use committed hook binaries.
+# Optional after hook source changes:
+# make build-claude-hook
 
 # Register marketplace
 DEST="$HOME/.claude/marketplaces/powermem"
@@ -883,7 +911,7 @@ powermem-server --host 0.0.0.0 --port 8848 &
 uv venv venv --python python3.11
 source venv/bin/activate
 POWERMEM_PYTHON="$VIRTUAL_ENV/bin/python"
-uv pip install --python "$POWERMEM_PYTHON" 'powermem[mcp,seekdb]'
+uv pip install --python "$POWERMEM_PYTHON" 'powermem[server,seekdb]'
 claude mcp remove powermem 2>/dev/null
 claude mcp add powermem -- powermem-mcp stdio
 ```
