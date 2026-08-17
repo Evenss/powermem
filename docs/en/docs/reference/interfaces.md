@@ -1,6 +1,6 @@
 ---
 title: Interfaces
-description: Choose between the Codex plugin, CLI, Python SDKs, HTTP, and MCP.
+description: Choose between the Codex plugin, DeepSeek Harness plugin, CLI, Python SDKs, HTTP, and MCP.
 ---
 
 # Interfaces
@@ -10,6 +10,7 @@ All remote interfaces operate on the same Server and persistent Artifact storage
 | Interface | Intended use | Install |
 | --- | --- | --- |
 | Codex plugin | Cross-session recall and explicit Memory maintenance in Codex | `powercontext setup codex` |
+| DeepSeek Harness plugin | Cross-session recall and explicit Memory maintenance in DeepSeek Harness | `powercontext setup dsh` |
 | CLI | Setup, diagnostics, Server control, capability checks, and human Candidate review | `powercontext[cli,server]` |
 | Python Client SDK | Typed async calls to a running Server | `powercontext[client]` |
 | Core SDK | In-process Source, Artifact, Trigger, and composition contracts | base package |
@@ -22,11 +23,20 @@ The project-context skill tells Codex when to search, remember, revise, or retir
 relevant entries and captures user input as Source evidence. MCP tools perform explicit operations. The plugin never
 starts or embeds the Server.
 
+## DeepSeek Harness plugin
+
+The project-context skill tells DeepSeek Harness when to search, remember, revise, or retire Memory. Before each model
+step the plugin recalls relevant entries and captures user input as Source evidence. Named `pc_*` tools perform explicit
+HTTP operations. The plugin never starts or embeds the Server.
+
 ## CLI
 
 ```text
 powercontext setup codex
+powercontext setup dsh
 powercontext doctor
+powercontext doctor codex
+powercontext doctor dsh
 powercontext server run
 powercontext ready
 powercontext capabilities
@@ -54,6 +64,10 @@ powercontext external-skill import --scope-id project:example --fingerprint SHA2
 
 All content commands call the configured Server. The optional `server` role adds `powercontext server run`; it does
 not create a second content profile inside the CLI.
+
+`powercontext doctor` checks the package and Server without requiring an integration. `powercontext doctor codex`
+checks the Codex CLI and PowerContext plugin explicitly. `powercontext doctor dsh` checks the DeepSeek Harness CLI
+and that dump-config lists the plugin id `powercontext-dsh`.
 
 Generation and revision commands accept repeatable `--source-ref TYPE/ID` and
 `--artifact-ref FAMILY/ID@REVISION` options instead of serialized request files. `--target FAMILY/ID@REVISION`
@@ -185,6 +199,9 @@ The Server publishes its OpenAPI document at `/openapi.json`, readiness at `/hea
 `/v1/capabilities`, and Streamable HTTP MCP at `/mcp` by default. HTTP is the complete application contract. MCP is a
 curated agent-facing projection of Memory and Candidate Review operations. The five Candidate Review operations use the
 same validation, `expected_version` concurrency checks, and approval transaction over HTTP and MCP.
+Readiness is `ready` with HTTP 200 when all checks pass, `degraded` with HTTP 200 when only configured inference checks
+fail, and `not_ready` with HTTP 503 when the Runtime or database fails. Dependency checks use `ready`, `unavailable`,
+`timeout`, or `misconfigured`; an intentionally unbound Runtime reports `not_ready` for the `runtime` check.
 Experience and Skill generation, exact reads, external Registry operations, and low-level proposal operations remain
 HTTP-only.
 `POST /v1/context/prepare` and the matching Python Client method expose final ephemeral `PreparedContext` over HTTP;

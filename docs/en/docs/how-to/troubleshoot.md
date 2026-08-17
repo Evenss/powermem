@@ -11,7 +11,14 @@ Start with:
 powercontext doctor
 ```
 
-The command exits with status 1 if any check fails. Add `--json` for automation.
+The command checks the package, Server liveness, and Server readiness. It exits with status 1 unless every check is
+`ok`; a `degraded` readiness result is usable but is not a complete diagnostic success. Add `--json` for automation;
+the top-level result and every check include `ok` and `status`. Check optional host integrations separately:
+
+```bash
+powercontext doctor codex
+powercontext doctor dsh
+```
 
 ## Installation cannot read the Git URL
 
@@ -24,7 +31,7 @@ git ls-remote https://github.com/oceanbase/powercontext.git HEAD
 If this fails, configure the credential helper or SSH key used by Git, then rerun `uv tool install`. `uv` uses Git's
 credential configuration; PowerContext does not accept or store repository credentials.
 
-## `powercontext` or `codex` is not found
+## `powercontext`, `codex`, or `dsh` is not found
 
 Run:
 
@@ -32,21 +39,31 @@ Run:
 uv tool dir --bin
 command -v powercontext
 command -v codex
+command -v dsh
 ```
 
-Add the uv tool bin directory to `PATH` if needed. `powercontext setup codex` reports an error rather than installing a
-plugin when Codex CLI is unavailable.
+Add the uv tool bin directory to `PATH` if needed. `powercontext setup codex` and `powercontext setup dsh` report an
+error rather than installing a plugin when the host CLI is unavailable.
 
 ## The plugin is missing or stale
+
+Confirm the integration failure without involving the Server:
+
+```bash
+powercontext doctor codex
+```
 
 Reinstall it from the same ref as the tool:
 
 ```bash
 powercontext setup codex --source oceanbase/powercontext --ref <ref>
 codex plugin list --json
+powercontext setup dsh --source oceanbase/powercontext --ref <ref>
+dsh --profile web --dump-config
 ```
 
-Then start a new Codex session. Check `/hooks` if prompt recall and capture do not run.
+Then start a new host session. Check `/hooks` in Codex, or confirm dump-config lists `id: powercontext-dsh` for DeepSeek
+Harness. The DSH plugin directory must contain `lib/index.js`.
 
 ## The Server check fails
 
@@ -64,7 +81,10 @@ powercontext doctor --server-url http://127.0.0.1:9000
 powercontext --server-url http://127.0.0.1:9000 ready
 ```
 
-The bundled Codex plugin uses port 8000 by default.
+The bundled Codex plugin uses port 8000 by default. A liveness failure means the process cannot answer health
+requests, so readiness is not checked. `not_ready` with HTTP 503 means the Runtime or database cannot accept work.
+`degraded` with HTTP 200 means a configured inference capability failed while database-backed operations remain
+available. Human and JSON output retain the Server's individual check statuses.
 
 ## The Server cannot open its database
 
@@ -80,6 +100,18 @@ powercontext server run
 
 Use the same environment variable whenever you start or diagnose that instance. PowerContext creates missing parent
 directories for a file-backed SQLite database.
+
+## An inference readiness check fails
+
+When generation or embedding is configured, Server readiness makes one minimal real provider request. This catches
+credentials and endpoints that can be validated only by sending a request, including a base URL that is missing the
+provider's API prefix. Stable statuses are `ready`, `unavailable`, `timeout`, and `misconfigured`; responses never
+include credentials, provider response bodies, or configured URLs.
+
+An inference failure makes overall readiness `degraded` with HTTP 200 instead of removing the whole Server from
+traffic. `ready` and `misconfigured` results are cached for 300 seconds; temporary `timeout` and `unavailable` results
+are retried after 30 seconds. Concurrent health requests share one refresh. Restart the Server to apply corrected
+static configuration immediately, or wait for the cached result to expire.
 
 ## Memory writes work but captured prompts do not become Memory
 

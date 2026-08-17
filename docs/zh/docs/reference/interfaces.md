@@ -1,6 +1,6 @@
 ---
 title: 接口
-description: 在 Codex 插件、CLI、Python SDK、HTTP 和 MCP 之间选择。
+description: 在 Codex 插件、DeepSeek Harness 插件、CLI、Python SDK、HTTP 和 MCP 之间选择。
 ---
 
 # 接口
@@ -10,6 +10,7 @@ description: 在 Codex 插件、CLI、Python SDK、HTTP 和 MCP 之间选择。
 | 接口 | 适用场景 | 安装 |
 | --- | --- | --- |
 | Codex 插件 | 在 Codex 中跨会话恢复和显式维护 Memory | `powercontext setup codex` |
+| DeepSeek Harness 插件 | 在 DeepSeek Harness 中跨会话恢复和显式维护 Memory | `powercontext setup dsh` |
 | CLI | 配置、诊断、Server 控制、能力检查和人工 Candidate 审核 | `powercontext[cli,server]` |
 | Python Client SDK | 对运行中的 Server 发起类型化异步调用 | `powercontext[client]` |
 | Core SDK | 进程内 Source、Artifact、Trigger 和组合契约 | 基础包 |
@@ -21,11 +22,19 @@ description: 在 Codex 插件、CLI、Python SDK、HTTP 和 MCP 之间选择。
 project-context skill 指导 Codex 何时检索、记忆、修订或停用 Memory。Prompt Hook 会恢复相关条目，并把
 用户输入采集为 Source 证据；MCP 工具执行显式操作。插件不会启动或内嵌 Server。
 
+## DeepSeek Harness 插件
+
+project-context skill 指导 DeepSeek Harness 何时检索、记忆、修订或停用 Memory。每轮模型开口前，插件会恢复相关
+条目，并把用户输入采集为 Source 证据；具名 `pc_*` 工具执行显式 HTTP 操作。插件不会启动或内嵌 Server。
+
 ## CLI
 
 ```text
 powercontext setup codex
+powercontext setup dsh
 powercontext doctor
+powercontext doctor codex
+powercontext doctor dsh
 powercontext server run
 powercontext ready
 powercontext capabilities
@@ -53,6 +62,10 @@ powercontext external-skill import --scope-id project:example --fingerprint SHA2
 
 所有内容命令都调用已配置的 Server。可选的 `server` role 会增加 `powercontext server run`，但不会在 CLI
 中创建第二套内容 profile。
+
+`powercontext doctor` 检查安装包和 Server，不要求任何集成；`powercontext doctor codex` 显式检查 Codex CLI
+和 PowerContext 插件；`powercontext doctor dsh` 检查 DeepSeek Harness CLI，以及 dump-config 是否列出插件 id
+`powercontext-dsh`。
 
 Generation 和 revision 命令通过可重复的 `--source-ref TYPE/ID` 与
 `--artifact-ref FAMILY/ID@REVISION` 接收精确引用，不再读取序列化请求文件。
@@ -179,6 +192,9 @@ Server 在 `/openapi.json` 提供 OpenAPI 文档，在 `/health/ready` 提供就
 Memory 与 Candidate Review operation 子集。五个 Candidate Review operation 通过 HTTP 和 MCP 使用相同的
 validation、`expected_version` 并发校验和 approval transaction。Experience/Skill generation、exact read、
 external Registry operation 和低阶 proposal operation 仍只通过 HTTP 提供。
+所有检查通过时 readiness 为 HTTP 200 的 `ready`；只有已配置的推理检查失败时为 HTTP 200 的 `degraded`；
+Runtime 或数据库失败时为 HTTP 503 的 `not_ready`。依赖检查使用 `ready`、`unavailable`、`timeout` 或
+`misconfigured`；有意不绑定 Runtime 时，`runtime` 检查使用 `not_ready`。
 `POST /v1/context/prepare` 及对应的 Python Client method 通过 HTTP 提供最终的临时 `PreparedContext`；
 Runtime 召回 active Memory 与 approved Experience head，统一负责选择和总输出预算；该 operation 不会投影为
 MCP tool。public schema 仍是 `powercontext.prepared-context.v1`，Experience item 在 prepared content 内携带精确
