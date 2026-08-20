@@ -1,7 +1,22 @@
+# Copyright (c) 2026 OceanBase.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Environment-backed settings for the PowerContext Server."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
@@ -14,7 +29,6 @@ from powercontext.builtin.runtime.config import (
     HandoffReportConfig,
     InferenceConfig,
     RuntimeConfig,
-    normalize_database_discriminator,
 )
 from powercontext.paths import default_database_path, sqlite_url
 
@@ -140,10 +154,12 @@ class ServerSettings(BaseSettings):
     inference: InferenceConfig = Field(default_factory=InferenceConfig)
     external_skills: ExternalSkillsConfig = Field(default_factory=ExternalSkillsConfig)
 
-    @model_validator(mode="before")
+    @field_validator("database", mode="before")
     @classmethod
     def default_database_to_sqlite(cls, value: object) -> object:
-        return normalize_database_discriminator(value)
+        if not isinstance(value, Mapping) or value.get("kind", "sqlite") != "sqlite":
+            return value
+        return {"kind": "sqlite", "url": _default_database().url, **value}
 
     @model_validator(mode="after")
     def require_authentication_for_dashboard(self) -> ServerSettings:
