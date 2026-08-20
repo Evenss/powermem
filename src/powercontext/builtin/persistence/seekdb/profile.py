@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager, suppress
+from importlib import import_module
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Literal, Protocol, cast
@@ -127,12 +128,11 @@ class SeekDBProfile:
 
 def _load_binding() -> ModuleType:
     try:
-        import pylibseekdb
+        return import_module("pylibseekdb")
     except ModuleNotFoundError as error:
         if error.name != "pylibseekdb":
             raise
         raise SeekDBUnavailableError from None
-    return pylibseekdb
 
 
 async def _open_instance(module: ModuleType, path: Path) -> _SeekDBInstance:

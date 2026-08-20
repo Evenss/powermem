@@ -112,6 +112,7 @@ def test_settings_load_server_environment(monkeypatch) -> None:
 
     assert settings.http.host == "127.0.0.2"
     assert settings.http.port == 9000
+    assert isinstance(settings.database, SQLiteConfig)
     assert settings.database.url == "sqlite+aiosqlite:////var/lib/powercontext/test.db"
     assert settings.runtime.source_window_limit == 25
     assert settings.runtime.memory_extraction_profile is MemoryExtractionProfile.CONVERSATION
@@ -135,6 +136,7 @@ def test_server_settings_vec1_preserves_file_database(tmp_path, monkeypatch) -> 
 
     settings = ServerSettings()
 
+    assert isinstance(settings.database, SQLiteConfig)
     assert settings.database.url == f"sqlite+aiosqlite:///{data_dir / 'powercontext.db'}"
 
 

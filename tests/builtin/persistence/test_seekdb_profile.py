@@ -22,7 +22,7 @@ from typing import cast
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import Table
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -115,7 +115,9 @@ def test_engine_uses_the_local_socket(tmp_path, monkeypatch: pytest.MonkeyPatch)
         {"user": "root", "unix_socket": "seekdb.sock"},
     )
 
-    url = make_url(cast(object, captured["url"]))
+    captured_url = captured["url"]
+    assert isinstance(captured_url, (str, URL))
+    url = make_url(captured_url)
     assert engine is expected_engine
     assert url.drivername == "mysql+aseekdb"
     assert url.username == "root"
