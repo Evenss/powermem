@@ -31,6 +31,7 @@ from powercontext.builtin.artifacts.memory import EmbeddingProfile
 from powercontext.builtin.inference import EmbeddingResult, InferenceConfigurationError
 from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
+from powercontext.builtin.persistence.seekdb import SeekDBConfig
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime import InferenceConfig, MemoryExtractionProfile, RuntimeConfig
 from powercontext.http import (
@@ -146,6 +147,45 @@ def test_server_settings_select_oceanbase(monkeypatch) -> None:
 
     assert isinstance(settings.database, OceanBaseConfig)
     assert settings.database.url.get_secret_value() == url
+
+
+def test_server_settings_select_embedded_seekdb(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "powercontext-data"
+    monkeypatch.setenv("POWERCONTEXT_HOME", str(data_dir))
+    monkeypatch.setenv("POWERCONTEXT_SERVER_DATABASE_KIND", "seekdb")
+
+    settings = ServerSettings()
+
+    assert isinstance(settings.database, SeekDBConfig)
+    assert settings.database.path == data_dir / "seekdb"
+    assert settings.database.database == "test"
+    assert not data_dir.exists()
+
+
+@pytest.mark.parametrize("configured_path", ["", "   "])
+def test_server_settings_default_blank_embedded_seekdb_path(configured_path, tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "powercontext-data"
+    monkeypatch.setenv("POWERCONTEXT_HOME", str(data_dir))
+    monkeypatch.setenv("POWERCONTEXT_SERVER_DATABASE_KIND", "seekdb")
+    monkeypatch.setenv("POWERCONTEXT_SERVER_DATABASE_PATH", configured_path)
+
+    settings = ServerSettings()
+
+    assert isinstance(settings.database, SeekDBConfig)
+    assert settings.database.path == data_dir / "seekdb"
+
+
+def test_server_settings_override_embedded_seekdb_path(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "custom-seekdb"
+    monkeypatch.setenv("POWERCONTEXT_SERVER_DATABASE_KIND", "seekdb")
+    monkeypatch.setenv("POWERCONTEXT_SERVER_DATABASE_PATH", str(database_path))
+    monkeypatch.setenv("POWERCONTEXT_SERVER_DATABASE_DATABASE", "custom")
+
+    settings = ServerSettings()
+
+    assert isinstance(settings.database, SeekDBConfig)
+    assert settings.database.path == database_path
+    assert settings.database.database == "custom"
 
 
 def test_server_scheduler_uses_the_powercontext_data_directory(tmp_path, monkeypatch) -> None:
