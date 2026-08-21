@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -181,13 +181,21 @@ def test_server_settings_override_embedded_seekdb_path(tmp_path, monkeypatch) ->
     database_path = tmp_path / "custom-seekdb"
     monkeypatch.setenv("POWERCONTEXT_SERVER_DATABASE_KIND", "seekdb")
     monkeypatch.setenv("POWERCONTEXT_SERVER_DATABASE_PATH", str(database_path))
-    monkeypatch.setenv("POWERCONTEXT_SERVER_DATABASE_DATABASE", "custom")
 
     settings = ServerSettings()
 
     assert isinstance(settings.database, SeekDBConfig)
     assert settings.database.path == database_path
-    assert settings.database.database == "custom"
+    assert settings.database.database == "test"
+
+
+def test_server_settings_reject_custom_embedded_seekdb_database(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("POWERCONTEXT_SERVER_DATABASE_KIND", "seekdb")
+    monkeypatch.setenv("POWERCONTEXT_SERVER_DATABASE_PATH", str(tmp_path / "seekdb"))
+    monkeypatch.setenv("POWERCONTEXT_SERVER_DATABASE_DATABASE", "custom")
+
+    with pytest.raises(ValidationError, match="Input should be 'test'"):
+        ServerSettings()
 
 
 def test_server_scheduler_uses_the_powercontext_data_directory(tmp_path, monkeypatch) -> None:

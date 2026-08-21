@@ -26,6 +26,7 @@ from sqlalchemy.engine import URL, make_url
 from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.seekdb import SeekDBConfig, SeekDBProfile
 from powercontext.builtin.persistence.seekdb import profile as seekdb_profile_module
 
@@ -148,6 +149,69 @@ def test_profile_closes_engine_before_instance(tmp_path, monkeypatch: pytest.Mon
             pass
 
         assert events == [f"aopen:{(tmp_path / 'seekdb').resolve()}", "engine.dispose", "instance.close"]
+
+    asyncio.run(scenario())
+
+
+def test_profile_finishes_shutdown_before_propagating_cancellation(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        events: list[str] = []
+        close_started = asyncio.Event()
+        transaction_started = asyncio.Event()
+        release_transaction = asyncio.Event()
+        instance = _SeekDBInstance(events)
+        module = _SeekDBModule(instance, events)
+        engine = _TrackedEngine(events)
+        original_close = AsyncDatabase.close
+
+        async def create_no_tables(_connection: object, _tables: tuple[Table, ...]) -> None:
+            return None
+
+        async def observe_close(database: AsyncDatabase) -> None:
+            close_started.set()
+            await original_close(database)
+
+        monkeypatch.setattr(seekdb_profile_module, "_load_binding", lambda: module)
+        monkeypatch.setattr(seekdb_profile_module, "_create_engine", lambda _config, _options: engine)
+        monkeypatch.setattr(seekdb_profile_module, "create_tables", create_no_tables)
+        monkeypatch.setattr(AsyncDatabase, "close", observe_close)
+
+        context = SeekDBProfile.open(SeekDBConfig(path=tmp_path / "seekdb"), tables=())
+        profile = await context.__aenter__()
+
+        async def hold_transaction() -> None:
+            async with profile.database.transaction():
+                events.append("transaction.active")
+                transaction_started.set()
+                await release_transaction.wait()
+            events.append("transaction.complete")
+
+        transaction_task = asyncio.create_task(hold_transaction())
+        await transaction_started.wait()
+        shutdown_task = asyncio.create_task(context.__aexit__(None, None, None))
+        await close_started.wait()
+
+        shutdown_task.cancel()
+        await asyncio.sleep(0)
+
+        assert not shutdown_task.done()
+        assert "instance.close" not in events
+
+        release_transaction.set()
+        await transaction_task
+        with pytest.raises(asyncio.CancelledError):
+            await shutdown_task
+
+        assert events == [
+            f"aopen:{(tmp_path / 'seekdb').resolve()}",
+            "transaction.active",
+            "transaction.complete",
+            "engine.dispose",
+            "instance.close",
+        ]
 
     asyncio.run(scenario())
 

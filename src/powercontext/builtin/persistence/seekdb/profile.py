@@ -71,7 +71,7 @@ class SeekDBConfig(BaseModel):
 
     kind: Literal["seekdb"] = "seekdb"
     path: Path
-    database: str = "test"
+    database: Literal["test"] = "test"
     echo: bool = False
     pool_pre_ping: bool = True
 
@@ -81,14 +81,6 @@ class SeekDBConfig(BaseModel):
         if isinstance(value, str) and not value.strip():
             raise ValueError("seekDB path must not be empty")  # noqa: TRY003
         return value
-
-    @field_validator("database")
-    @classmethod
-    def require_database_name(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("seekDB database name must not be empty")  # noqa: TRY003
-        return normalized
 
 
 class SeekDBProfile:
@@ -121,7 +113,12 @@ class SeekDBProfile:
                     await create_tables(connection, tables)
                 yield profile
             finally:
-                await database.close()
+                close_task = asyncio.create_task(database.close())
+                try:
+                    await asyncio.shield(close_task)
+                except asyncio.CancelledError:
+                    await close_task
+                    raise
         finally:
             instance.close()
 
