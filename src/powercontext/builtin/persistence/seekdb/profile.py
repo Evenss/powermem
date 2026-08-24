@@ -22,7 +22,7 @@ from contextlib import asynccontextmanager, suppress
 from importlib import import_module
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Literal, Protocol, TypeVar, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator
 from pyobvector import AsyncOceanBaseDialect
@@ -38,6 +38,7 @@ from powercontext.builtin.persistence.schema import create_tables
 
 _DIALECT_DRIVER = "mysql+aseekdb"
 _DIALECT_REGISTRY_NAME = "mysql.aseekdb"
+_T = TypeVar("_T")
 
 
 class AsyncSeekDBDialect(AsyncOceanBaseDialect):
@@ -117,7 +118,7 @@ class SeekDBProfile:
                 try:
                     await asyncio.shield(close_task)
                 except asyncio.CancelledError:
-                    await close_task
+                    await _finish_task(close_task)
                     raise
         finally:
             instance.close()
@@ -138,9 +139,20 @@ async def _open_instance(module: ModuleType, path: Path) -> _SeekDBInstance:
         return cast(_SeekDBInstance, await asyncio.shield(open_task))
     except asyncio.CancelledError:
         with suppress(BaseException):
-            instance = cast(_SeekDBInstance, await open_task)
+            instance = cast(_SeekDBInstance, await _finish_task(open_task))
             instance.close()
         raise
+
+
+async def _finish_task(task: asyncio.Task[_T]) -> _T:
+    """Wait for cleanup to finish without passing further cancellations to it."""
+
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            continue
+    return task.result()
 
 
 def _create_engine(config: SeekDBConfig, connection_options: Mapping[str, object]) -> AsyncEngine:

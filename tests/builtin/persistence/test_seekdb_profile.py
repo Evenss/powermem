@@ -153,7 +153,7 @@ def test_profile_closes_engine_before_instance(tmp_path, monkeypatch: pytest.Mon
     asyncio.run(scenario())
 
 
-def test_profile_finishes_shutdown_before_propagating_cancellation(
+def test_profile_finishes_shutdown_before_propagating_repeated_cancellation(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -194,17 +194,22 @@ def test_profile_finishes_shutdown_before_propagating_cancellation(
         shutdown_task = asyncio.create_task(context.__aexit__(None, None, None))
         await close_started.wait()
 
-        shutdown_task.cancel()
+        shutdown_task.cancel("first")
+        await asyncio.sleep(0)
+        shutdown_task.cancel("second")
         await asyncio.sleep(0)
 
         assert not shutdown_task.done()
+        assert shutdown_task.cancelling() == 2
         assert "instance.close" not in events
 
         release_transaction.set()
         await transaction_task
-        with pytest.raises(asyncio.CancelledError):
+        with pytest.raises(asyncio.CancelledError) as cancellation:
             await shutdown_task
 
+        assert cancellation.value.args == ("first",)
+        assert shutdown_task.cancelled()
         assert events == [
             f"aopen:{(tmp_path / 'seekdb').resolve()}",
             "transaction.active",
@@ -216,7 +221,7 @@ def test_profile_finishes_shutdown_before_propagating_cancellation(
     asyncio.run(scenario())
 
 
-def test_profile_closes_instance_if_open_is_cancelled(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_profile_closes_instance_if_open_is_cancelled_repeatedly(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     async def scenario() -> None:
         events: list[str] = []
         started = asyncio.Event()
@@ -238,11 +243,20 @@ def test_profile_closes_instance_if_open_is_cancelled(tmp_path, monkeypatch: pyt
 
         task = asyncio.create_task(open_profile())
         await started.wait()
-        task.cancel()
+        task.cancel("first")
+        await asyncio.sleep(0)
+        task.cancel("second")
+        await asyncio.sleep(0)
+
+        assert not task.done()
+        assert task.cancelling() == 2
+
         finish.set()
-        with pytest.raises(asyncio.CancelledError):
+        with pytest.raises(asyncio.CancelledError) as cancellation:
             await task
 
+        assert cancellation.value.args == ("first",)
+        assert task.cancelled()
         assert events == [f"aopen:{(tmp_path / 'seekdb').resolve()}", "instance.close"]
 
     asyncio.run(scenario())
