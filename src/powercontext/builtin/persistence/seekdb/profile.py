@@ -31,6 +31,7 @@ from sqlalchemy.dialects import registry as dialect_registry
 from sqlalchemy.engine import URL
 from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from typing_extensions import override
 
 from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.errors import PersistenceError
@@ -46,6 +47,7 @@ class AsyncSeekDBDialect(AsyncOceanBaseDialect):
 
     supports_statement_cache = AsyncOceanBaseDialect.supports_statement_cache
 
+    @override
     def do_close(self, dbapi_connection: DBAPIConnection) -> None:
         # seekDB resets the socket while aiomysql drains COM_QUIT. SQLAlchemy's
         # terminate path handles that reset and falls back to closing the transport.
