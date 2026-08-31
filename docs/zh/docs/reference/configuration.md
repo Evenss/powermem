@@ -1,11 +1,28 @@
 ---
 title: 配置
-description: PowerContext 路径、Server、Client、推理和 Codex 环境变量。
+description: PowerContext 路径、Server、Client、推理和 Agent 集成环境变量。
 ---
 
 # 配置
 
-PowerContext 进程启动时从环境变量读取配置。
+PowerContext 进程启动时从环境变量读取配置。CLI 不会自动搜索 `.env` 文件；请在 shell 中导出变量、由服务管理器
+或容器提供，或者向支持 `--env-file` 的命令显式传入文件。Agent 宿主可能会按照自身规则加载自己的环境文件。
+
+## 显式环境文件
+
+通过引导生成配置，在不显示凭据的情况下检查内容，并在启动前完成校验：
+
+```bash
+powercontext config init --output .env
+powercontext config show --env-file .env
+powercontext config validate --env-file .env
+powercontext server run --env-file .env
+```
+
+`config init` 会以 `0600` 权限写入文件。`server run` 收到 `--env-file` 后，文件中的赋值会覆盖进程中的同名值；
+文件中不存在的旧 `POWERCONTEXT_SERVER_*` 进程变量会被忽略，因此校验和启动使用同一份 Server 配置。
+`config show` 会隐藏已识别及生成器记录的凭据，但仍应把原文件当作可能含有秘密的部署文件保护。完整的引导与验证流程见
+[完整功能 Quick Start](../how-to/full-capability-runtime.md)。
 
 ## 用户数据
 
@@ -35,30 +52,59 @@ Server 配置使用 `POWERCONTEXT_SERVER_` 前缀。
 | `POWERCONTEXT_SERVER_MCP_PATH` | `/mcp` | MCP 路径 |
 | `POWERCONTEXT_SERVER_AUTH_ENABLED` | `false` | HTTP 和 MCP 是否要求一个静态 Bearer token |
 | `POWERCONTEXT_SERVER_AUTH_TOKEN` | 未设置 | 静态 Bearer token；启用鉴权时必须设置 |
+| `POWERCONTEXT_SERVER_ALLOW_UNAUTHENTICATED_NON_LOOPBACK` | `false` | 在鉴权关闭时显式允许绑定非 loopback 地址 |
 | `POWERCONTEXT_SERVER_DASHBOARD_ENABLED` | `true` | 在 Server 根路径 `/` 启用 Dashboard |
 | `POWERCONTEXT_SERVER_DASHBOARD_SCOPES` | `[]` | Dashboard 可选择的 scope JSON 数组 |
+| `POWERCONTEXT_SERVER_HANDOFF_REPORT_ENABLED` | `true` | 启用 Handoff Report 及其 API route |
 | `POWERCONTEXT_SERVER_LOGGING_LEVEL` | `INFO` | operational log 级别 |
 | `POWERCONTEXT_SERVER_LOGGING_FORMAT` | `console` | `console` 或结构化 `json` 输出 |
 | `POWERCONTEXT_SERVER_LOGGING_ACCESS` | `true` | 记录外部 HTTP 和逻辑 MCP request completion |
 | `POWERCONTEXT_SERVER_METRICS_ENABLED` | `true` | 在 `/metrics` 暴露 Prometheus metrics |
 | `POWERCONTEXT_SERVER_TRACING_ENABLED` | `false` | 启用 span recording 和 OTLP export |
-| `POWERCONTEXT_SERVER_DATABASE_URL` | 用户数据目录下的 SQLite 文件 | SQLAlchemy 异步数据库 URL |
+| `POWERCONTEXT_SERVER_DATABASE_KIND` | `sqlite` | 存储后端：`sqlite`、`seekdb` 或 `oceanbase` |
+| `POWERCONTEXT_SERVER_DATABASE_URL` | 用户数据目录下的 SQLite 文件 | SQLite 或 OceanBase 的 SQLAlchemy 异步 URL；seekDB 不设置 |
+| `POWERCONTEXT_SERVER_DATABASE_PATH` | 用户数据目录下的 `seekdb` 目录 | 嵌入式 seekDB 路径；仅在 `DATABASE_KIND=seekdb` 时使用 |
+| `POWERCONTEXT_SERVER_RUNTIME_SCOPE_CACHE_SIZE` | `128` | Runtime 保留的非活动 scope composition 数量；进行中的 scope 不会被驱逐 |
 | `POWERCONTEXT_SERVER_RUNTIME_SOURCE_WINDOW_LIMIT` | `100` | 单次 activation 最多处理的 Source 数量 |
 | `POWERCONTEXT_SERVER_RUNTIME_MEMORY_EXTRACTION_PROFILE` | `coding` | Memory 选择策略：`coding` 或 `conversation` |
 | `POWERCONTEXT_SERVER_RUNTIME_MEMORY_RERANK_ENABLED` | `false` | 在 Memory 粗召回后应用 listwise rerank |
 | `POWERCONTEXT_SERVER_RUNTIME_MEMORY_RERANK_CANDIDATE_LIMIT` | `30` | 交给 reranker 的粗排候选池大小 |
 | `POWERCONTEXT_SERVER_RUNTIME_SCHEDULE_SECONDS` | 未设置 | Scheduler 间隔；未设置即不启用 |
-| `POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL` | 未设置 | 用于 Memory extraction 的 Pydantic AI 模型标识 |
-| `POWERCONTEXT_SERVER_INFERENCE_GENERATION_TIMEOUT_SECONDS` | `30` | Generation 超时 |
+| `POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL` | 未设置 | 配置的 extraction、generation、Handoff 和 rerank 操作共用的 Pydantic AI 模型 |
+| `POWERCONTEXT_SERVER_INFERENCE_GENERATION_TIMEOUT_SECONDS` | `30` | 单次结构化 generation 操作的超时秒数 |
+| `POWERCONTEXT_SERVER_INFERENCE_GENERATION_MAX_REQUESTS` | `2` | 单次结构化 generation 操作最多发起的 provider 请求数，包含重试 |
+| `POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_MODEL` | 未设置 | Pydantic AI embedding model；必须同时设置 profile ID 和 dimension |
+| `POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_PROFILE_ID` | 未设置 | vector index 使用的模型、dimension 和 normalization 的稳定标识 |
+| `POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_DIMENSION` | 未设置 | 向 embedding model 请求并校验的正整数输出维度 |
+| `POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_NORMALIZATION` | `unit` | vector normalization：`unit` 或 `none` |
+| `POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_TIMEOUT_SECONDS` | `30` | 单次 embedding 请求的超时秒数 |
 | `POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_BATCH_SIZE` | `10` | 单次 embedding 请求最多发送的文本数量 |
 | `POWERCONTEXT_SERVER_RUNTIME_EXPERIENCE_SCHEDULE_SECONDS` | 未设置 | Experience 孵化间隔；未设置即不启用该 job |
-| `POWERCONTEXT_SERVER_EXTERNAL_SKILLS` | 未设置 | 包含 host identity 和显式 Codex Skill roots 的 JSON object |
+| `POWERCONTEXT_SERVER_EXTERNAL_SKILLS` | 未设置 | 包含 host identity 和显式 Agent Skill targets 的 JSON object |
 
 静态 Bearer 鉴权默认关闭。启用后，API 和 MCP 请求必须携带 `Authorization: Bearer <token>`；liveness 和
-readiness endpoint 仍然公开。明文 HTTP 应只用于 loopback 地址；通过网络暴露启用鉴权的 Server 前必须配置 TLS。
+readiness endpoint 仍然公开。明文 HTTP 仅在 loopback 地址（`localhost`、`::1` 及 `127.0.0.0/8` 网段内的任意
+地址）上受信任。当 Server 绑定到非 loopback 地址且鉴权关闭时会拒绝启动；此时应启用鉴权、改回绑定 loopback，或在
+TLS 由上游终止或网络本身受控的场景下，
+显式设置 `POWERCONTEXT_SERVER_ALLOW_UNAUTHENTICATED_NON_LOOPBACK=true` 主动选择接受。通过网络暴露启用鉴权的
+Server 前必须配置 TLS。
+
+Python Client 和 CLI 对出站请求应用相同规则：配置的明文 `http://` Server URL 仅接受 loopback 主机，并且 Client 拒绝
+通过明文的非 loopback HTTP 发送任何请求，无论是否携带 Bearer token。当代码的 `http://` base URL 只是路由标签、
+实际传输是安全的，例如进程内 ASGI 应用、Unix domain socket 或由代理终止 TLS 时，必须自行传入 `http_client` 并
+显式设置 `trust_transport_security=True`。
+
+安全的 Docker 和远程访问配置见[部署 Server](../how-to/deploy-server.md)。
 
 Dashboard 默认启用，并与 HTTP API、MCP 共用监听地址和端口。默认未配置 scope，页面会显示空状态；Dashboard
 初始化失败只记录包含直接原因的 warning，不影响 Server 的 HTTP API、MCP 和健康检查启动。
+
+启用 Bearer 鉴权后，`/`、`/skills`、`/reviews`、`/handoff-reports` 的 HTML 外壳及其静态资源仍保持公开，以便
+浏览器渲染登录表单；数据请求仍受鉴权保护。在表单中输入 Server token 后，浏览器只把它保存在当前标签页的 session
+storage 中。如果连这些登录页也不能暴露，应同时关闭 Dashboard 和 Handoff Report。
+
+Handoff Report 独立默认启用，路径为 `/handoff-reports`。没有任何 scope 包含 committed Handoff 时，页面显示无数据
+模板预览。Scope discovery、检查、Revision 写入和导出步骤见[使用 Handoff Report](../how-to/use-handoff-report.md)。
 
 指定 SQLite 路径并启用定时提取的示例：
 
@@ -95,7 +141,7 @@ export POWERCONTEXT_SERVER_RUNTIME_MEMORY_RERANK_CANDIDATE_LIMIT=30
 Rerank 默认关闭。启用后，Runtime 会召回并融合配置的候选池，再使用 temperature 为 0 的 generation model，选择不超过
 search request 最终 `limit` 的结果。它不会修改已存储 Memory 或索引。Provider 与结构化输出失败仍作为 inference error
 显式返回；如果搜索必须独立于模型可用性，请关闭 rerank。算法、并发与 API 边界见
-[RFC 0080](../../rfcs/0080_memory_search_reranking.md)。
+[RFC 0080](/zh/rfcs/0080_memory_search_reranking/)。
 
 同一个 generation model 也控制显式 Experience generation、managed Skill generation/evolution，以及
 external Skill import/fork。未配置模型时，这些 operation 会在持久化 Candidate 前返回 capability error；
@@ -111,30 +157,43 @@ powercontext server run
 
 每次 activation 固定检查最多 32 条 Source，并且只把 metadata 包含 `"kind": "task-outcome"` 的 Content Source
 暴露给模型。该 job 会在 Review Inbox 中创建 pending Experience Candidate；它不会自动批准、进入
-PreparedContext、创建 managed Skill、将它导出给 Codex 或执行任何内容。Memory 和 Experience job 共用
+PreparedContext、创建 managed Skill、将它导出到 Agent target 或执行任何内容。Memory 和 Experience job 共用
 `POWERCONTEXT_HOME` 下的 APScheduler sidecar，但拥有独立的 job identity 和业务 cursor；取消其中一个 interval
 只会移除对应 job。
+设置与验证步骤见[创建并审核 Experience](../how-to/create-and-review-experience.md)。
 
-### 外部 Codex Skill
+### Agent Skill 目标
 
-通过一个 JSON 值配置 host-local roots：
+通过一个 JSON 值配置 Codex 和 Claude Code 的 host-local target：
 
 ```bash
 export POWERCONTEXT_SERVER_EXTERNAL_SKILLS='{
   "host_id": "workstation-1",
-  "codex_roots": [
+  "targets": [
     {
-      "root_id": "repository",
+      "target_id": "codex-project",
+      "agent_kind": "codex",
       "installation_scope": "project",
-      "path": "/srv/project/.agents/skills"
+      "path": "/srv/project/.agents/skills",
+      "allow_managed_publish": true
+    },
+    {
+      "target_id": "claude-project",
+      "agent_kind": "claude_code",
+      "installation_scope": "project",
+      "path": "/srv/project/.claude/skills",
+      "allow_managed_publish": true
     }
   ]
 }'
 ```
 
-每个 root ID 必须唯一；支持的 installation scope 是 `user`、`project` 和 `plugin`。PowerContext 只扫描这些
-显式 root 的直接 Skill package 子目录，不会推断 home 目录、安装 package 或授予执行权限。`host_id`、locator
-和 registration 都是本地环境状态，不是跨 host 或跨 Agent contract。
+每个 target ID 必须唯一；`agent_kind` 支持 `codex` 和 `claude_code`，installation scope 支持 `user`、`project`
+和 `plugin`。PowerContext 只扫描这些显式 target 的直接 Skill package 子目录，不会推断 home 目录、安装 package
+或授予执行权限。`allow_managed_publish` 默认是 `false`；设为 `true` 后，authenticated Skills Library 或 Review
+页面可以把 approved managed Skill 显式创建或安全更新到该 target。页面仍不能提交任意路径，也不会覆盖外部或
+已被修改的 package。`host_id`、locator 和 registration 都是本地环境状态，不是跨 host contract。已有的
+`codex_roots` 配置继续作为 Codex-only 兼容格式被接受；新配置应使用 `targets`。
 
 Server 始终创建 non-recording OpenTelemetry request context，从 inbound span 派生 `X-PowerContext-Request-ID`。如需为
 CLI 管理的 Server 启用 recording 和 export，请安装 `powercontext[cli,server,tracing-otlp]`、启用 tracing，
@@ -270,3 +329,15 @@ Authorization 只能来自环境变量，不能加入 Server URL 或插件选项
 
 Pi 会拒绝包含凭据、query 或 fragment 的 base URL。召回、采集和边界 flush 都会正常降级；显式 `pc_*` 持久化写入
 必须确认，Pi 没有交互 UI 时会被拒绝。修改这些变量后需要重启 Pi。
+
+## 其他 Agent 集成
+
+部分集成使用自己的配置文件或环境变量前缀，具体指南是这些设置的准确信息源：
+
+- [Hermes](../how-to/configure-hermes.md)
+- [LangChain](../how-to/configure-langchain.md)
+- [LangGraph](../how-to/configure-langgraph.md)
+- [OpenClaw](../how-to/configure-openclaw.md)
+- [OpenCode](../how-to/configure-opencode.md)
+- [Pydantic AI 适配器预览](../how-to/configure-pydantic-ai.md)
+- [WorkBuddy](../how-to/configure-workbuddy.md)

@@ -16,6 +16,10 @@ check: ## Run code quality tools.
 	@uv lock --locked
 	@echo "🚀 Linting code: Running prek"
 	@uv run prek run -a
+	@echo "🚀 Static type checking: Running ty"
+	@uv run ty check
+	@echo "🚀 Static type checking: Running ty for the Pydantic AI integration"
+	@uv run ty check integrations/pydantic-ai/src
 
 .PHONY: test
 test: ## Test the code with pytest
@@ -86,7 +90,7 @@ api-generate-check: ## Verify generated API code is current.
 	@uv run python scripts/generate_api.py --check
 
 .PHONY: js-api-generate
-js-api-generate: ## Generate the DeepSeek Harness operations table from OpenAPI.
+js-api-generate: ## Generate JavaScript integration operation tables from OpenAPI.
 	@uv run python scripts/generate_js_operations.py
 
 .PHONY: js-api-generate-check
@@ -94,8 +98,16 @@ js-api-generate-check: ## Verify generated JS operations are current.
 	@uv run python scripts/generate_js_operations.py --check
 
 .PHONY: js-test
-js-test: ## Run DeepSeek Harness plugin unit tests.
+js-test: ## Install, build, and test the DeepSeek Harness plugin.
+	@pnpm --dir integrations/dsh/plugins/powercontext install --frozen-lockfile --config.auto-install-peers=false
 	@pnpm --dir integrations/dsh/plugins/powercontext test
+	@pnpm --dir integrations/dsh/plugins/powercontext build
+	@git diff --exit-code -- \
+		integrations/dsh/plugins/powercontext/openapi/powercontext.yaml \
+		integrations/dsh/plugins/powercontext/src/operations.generated.ts \
+		integrations/dsh/plugins/powercontext/lib
+	@pnpm --dir integrations/dsh/plugins/powercontext test
+	@pnpm --dir integrations/dsh/plugins/powercontext test:e2e
 
 .PHONY: openclaw-plugin-build
 openclaw-plugin-build: ## Build the external OpenClaw memory plugin.
@@ -104,6 +116,13 @@ openclaw-plugin-build: ## Build the external OpenClaw memory plugin.
 .PHONY: openclaw-plugin-pack
 openclaw-plugin-pack: ## Build and pack the external OpenClaw memory plugin.
 	@pnpm --dir integrations/openclaw/plugins/memory-powercontext pack:local
+
+.PHONY: opencode-test
+opencode-test: ## Install, test, type-check, and build the OpenCode plugin.
+	@pnpm --dir integrations/opencode/plugins/powercontext install --frozen-lockfile
+	@pnpm --dir integrations/opencode/plugins/powercontext test
+	@pnpm --dir integrations/opencode/plugins/powercontext run typecheck
+	@pnpm --dir integrations/opencode/plugins/powercontext run build
 
 .PHONY: pi-test
 pi-test: ## Install and test the Pi package.

@@ -17,7 +17,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sqlite3
 from pathlib import Path
+from time import monotonic, sleep
 
 import httpx
 import pytest
@@ -38,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.memory import (
     EmbeddingProfile,
+    MemoryCandidateRequest,
     MemoryCapabilities,
     MemoryEntryInput,
     MemoryProjection,
@@ -104,6 +107,32 @@ _STAGE_ATTRIBUTE_KEYS = {
         "powercontext.context.build.status",
         "powercontext.context.build.content_bytes",
     },
+    "memory.flush": {
+        "powercontext.operation.name",
+        "powercontext.operation.unit",
+        "powercontext.operation.outcome",
+        "powercontext.memory.flush.source_count",
+    },
+    "experience.incubation": {
+        "powercontext.operation.name",
+        "powercontext.operation.unit",
+        "powercontext.operation.outcome",
+        "powercontext.experience.incubation.source_count",
+        "powercontext.experience.incubation.candidate_count",
+    },
+    "scheduled.process_source_window": {
+        "powercontext.operation.name",
+        "powercontext.operation.unit",
+        "powercontext.operation.outcome",
+        "powercontext.background.source_count",
+    },
+    "scheduled.incubate_experience_candidates": {
+        "powercontext.operation.name",
+        "powercontext.operation.unit",
+        "powercontext.operation.outcome",
+        "powercontext.background.source_count",
+        "powercontext.background.candidate_count",
+    },
 }
 
 _VECTOR_PROFILE = EmbeddingProfile(
@@ -130,6 +159,9 @@ class _StageTeardown:
     def set_attributes(self, _attributes: object, /) -> None:
         pass
 
+    def set_outcome(self, _outcome: str, /) -> None:
+        pass
+
     def __exit__(self, *_: object) -> None:
         if self._failing:
             raise _StageTeardownError
@@ -139,6 +171,9 @@ class _ScopeLockTeardownFailingTracing:
     """Fail while closing `scope.lock`, the way a faulty injected tracing adapter would."""
 
     def stage(self, name: str, **_: object) -> _StageTeardown:
+        return _StageTeardown(failing=name == "scope.lock")
+
+    def background(self, name: str, **_: object) -> _StageTeardown:
         return _StageTeardown(failing=name == "scope.lock")
 
 
@@ -286,6 +321,49 @@ def test_observability_signals_correlate_without_counting_the_mcp_bridge(caplog,
     assert scope_id not in signal_payload
 
 
+def test_database_failure_log_does_not_include_memory_content(caplog, tmp_path) -> None:
+    database_path = tmp_path / "failure-log.db"
+    app = create_server_app(
+        settings=ServerSettings(
+            database=SQLiteConfig(url=f"sqlite+aiosqlite:///{database_path}"),
+            mcp=McpConfig(enabled=False),
+        )
+    )
+    memory_content = "PROBE-SENSITIVE-MEMORY-1318"
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        with sqlite3.connect(database_path) as connection:
+            connection.executescript("""
+                CREATE TRIGGER reject_memory_insert
+                BEFORE INSERT ON pc_memory_entry_versions
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced persistence failure');
+                END;
+            """)
+        caplog.clear()
+        with caplog.at_level(logging.ERROR, logger="powercontext.server.app"):
+            response = client.post(
+                "/v1/memory/remember",
+                json={"scope_id": "project:failure-log", "kind": "fact", "text": memory_content},
+            )
+
+    records = [
+        record for record in caplog.records if getattr(record, "event", None) == "application.operation.completed"
+    ]
+    assert response.status_code == 500
+    assert len(records) == 1
+    record = records[0]
+    assert record.operation == "remember_memory"
+    assert record.outcome == "failure"
+    assert record.error_code == "internal_error"
+    assert record.exc_info is not None
+
+    formatter = logging.Formatter()
+    rendered_records = tuple(formatter.format(record) for record in caplog.records)
+    assert "forced persistence failure" in formatter.format(record)
+    assert all(memory_content not in rendered for rendered in rendered_records)
+
+
 def test_inference_spans_join_the_operation_trace_only_when_instrumented(monkeypatch, tmp_path) -> None:
     # Pydantic AI also resolves already-constructed models through `infer_model`, so pass those through.
     monkeypatch.setattr(
@@ -298,16 +376,19 @@ def test_inference_spans_join_the_operation_trace_only_when_instrumented(monkeyp
 
     transport = next(span for span in instrumented if span.name == "HTTP flush_memory")
     application = next(span for span in instrumented if span.name == "powercontext flush_memory")
+    flush_stage = next(span for span in instrumented if span.name == "memory.flush")
     invoke_agent = next(span for span in instrumented if span.name == "invoke_agent memory_extraction")
     chat = next(span for span in instrumented if span.name.startswith("chat "))
 
     assert application.parent is not None
     assert application.parent.span_id == transport.context.span_id
+    assert flush_stage.parent is not None
+    assert flush_stage.parent.span_id == application.context.span_id
     assert invoke_agent.parent is not None
-    assert invoke_agent.parent.span_id == application.context.span_id
+    assert invoke_agent.parent.span_id == flush_stage.context.span_id
     assert chat.parent is not None
     assert chat.parent.span_id == invoke_agent.context.span_id
-    assert {span.context.trace_id for span in (transport, application, invoke_agent, chat)} == {
+    assert {span.context.trace_id for span in (transport, application, flush_stage, invoke_agent, chat)} == {
         transport.context.trace_id
     }
     assert not any(_is_inference_span(span) for span in uninstrumented)
@@ -532,16 +613,19 @@ def test_scope_lock_stage_span_reports_contention_and_closes_at_acquisition(tmp_
                 RememberMemoryRequest(entries=(MemoryEntryInput(kind="fact", text=memory_content),))
             )
 
-            # Holding the scope lock outside the Runtime makes the next write observe real contention.
-            lock = runtime._locks[scope_id]
-            await lock.acquire()
-            contending = asyncio.create_task(
-                memory.remember(RememberMemoryRequest(entries=(MemoryEntryInput(kind="fact", text="Second fact."),)))
-            )
-            await asyncio.sleep(0.05)
-            assert not contending.done()
-            lock.release()
-            await contending
+            # Holding the scope lock inside an operation makes the next write observe real contention.
+            async with runtime._scope_operation(scope_id):
+                lock = runtime._lock(scope_id)
+                await lock.acquire()
+                contending = asyncio.create_task(
+                    memory.remember(
+                        RememberMemoryRequest(entries=(MemoryEntryInput(kind="fact", text="Second fact."),))
+                    )
+                )
+                await asyncio.sleep(0.05)
+                assert not contending.done()
+                lock.release()
+                await contending
 
             # A failure inside the critical section must still release the lock for later writes.
             with pytest.raises(RevisionConflictError):
@@ -574,17 +658,101 @@ def test_scope_lock_is_released_when_stage_teardown_fails(tmp_path) -> None:
     scope_id = "project:private-broken-tracing"
 
     async def scenario() -> bool:
-        async with open_builtin_runtime(
-            BuiltinConfig(database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'broken-tracing.db'}")),
-            tracing=_ScopeLockTeardownFailingTracing(),
-        ) as runtime:
+        async with (
+            open_builtin_runtime(
+                BuiltinConfig(database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'broken-tracing.db'}")),
+                tracing=_ScopeLockTeardownFailingTracing(),
+            ) as runtime,
+            runtime._scope_operation(scope_id),
+        ):
+            lock = runtime._lock(scope_id)
             with pytest.raises(_StageTeardownError):
                 await runtime.memory.for_scope(scope_id).remember(
                     RememberMemoryRequest(entries=(MemoryEntryInput(kind="fact", text="Guarded fact."),))
                 )
-            return runtime._locks[scope_id].locked()
+            return lock.locked()
 
     assert asyncio.run(scenario()) is False
+
+
+class _EmptyCandidatePipeline:
+    """Produce no Memory candidates so a scheduled flush advances the cursor without a model."""
+
+    async def extract(self, request: MemoryCandidateRequest, /) -> tuple[MemoryEntryInput, ...]:
+        del request
+        return ()
+
+
+class _EmptyExperiencePipeline:
+    """Produce no Experience candidates so a scheduled incubation advances the cursor without a model."""
+
+    async def incubate(self, sources: tuple[object, ...], /) -> tuple[()]:
+        del sources
+        return ()
+
+
+def test_scheduled_source_window_starts_an_independent_trace_root(tmp_path) -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider(shutdown_on_exit=False)
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    app = create_server_app(
+        settings=ServerSettings(
+            database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'scheduled-tracing.db'}"),
+            runtime=RuntimeConfig(schedule_seconds=0.02),
+            mcp=McpConfig(enabled=False),
+        ),
+        scheduler_path=tmp_path / "scheduler.db",
+        candidate_pipeline=_EmptyCandidatePipeline(),
+        tracing=ServerTracing(provider),
+    )
+    scope_id = "project:private-scheduled-trace"
+    content = "private scheduled evidence"
+
+    with TestClient(app) as client:
+        captured = client.post(
+            "/v1/sources/content",
+            json={"scope_id": scope_id, "source_id": "task-1", "content": content},
+        )
+        assert captured.status_code == 202
+        root = _wait_for_named_span(exporter, "scheduled.process_source_window", outcome="success")
+        spans = list(exporter.get_finished_spans())
+        flush = _only_child(spans, root, "memory.flush")
+        _assert_scheduled_background_trace(root, flush, spans, scope_id=scope_id, content=content)
+        assert (root.attributes or {})["powercontext.background.source_count"] == 1
+        assert (flush.attributes or {})["powercontext.memory.flush.source_count"] == 1
+
+
+def test_scheduled_experience_starts_an_independent_trace_root(tmp_path) -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider(shutdown_on_exit=False)
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    app = create_server_app(
+        settings=ServerSettings(
+            database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'scheduled-experience-tracing.db'}"),
+            runtime=RuntimeConfig(experience_schedule_seconds=0.02),
+            mcp=McpConfig(enabled=False),
+        ),
+        scheduler_path=tmp_path / "scheduler.db",
+        experience_pipeline=_EmptyExperiencePipeline(),
+        tracing=ServerTracing(provider),
+    )
+    scope_id = "project:private-scheduled-experience"
+    content = "private scheduled incubation evidence"
+
+    with TestClient(app) as client:
+        captured = client.post(
+            "/v1/sources/content",
+            json={"scope_id": scope_id, "source_id": "task-1", "content": content},
+        )
+        assert captured.status_code == 202
+        root = _wait_for_named_span(exporter, "scheduled.incubate_experience_candidates", outcome="success")
+        spans = list(exporter.get_finished_spans())
+        incubation = _only_child(spans, root, "experience.incubation")
+        _assert_scheduled_background_trace(root, incubation, spans, scope_id=scope_id, content=content)
+        assert (root.attributes or {})["powercontext.background.source_count"] == 1
+        assert (root.attributes or {})["powercontext.background.candidate_count"] == 0
+        assert (incubation.attributes or {})["powercontext.experience.incubation.source_count"] == 1
+        assert (incubation.attributes or {})["powercontext.experience.incubation.candidate_count"] == 0
 
 
 def test_vector_search_exports_embedding_under_memory_search_without_recording_text(monkeypatch, tmp_path) -> None:
@@ -749,6 +917,51 @@ def _children(spans: list[ReadableSpan], parent: ReadableSpan, name: str) -> lis
         for span in spans
         if span.name == name and span.parent is not None and span.parent.span_id == parent.context.span_id
     ]
+
+
+def _wait_for_named_span(
+    exporter: InMemorySpanExporter,
+    name: str,
+    *,
+    outcome: str,
+    timeout: float = 3,
+) -> ReadableSpan:
+    deadline = monotonic() + timeout
+    while monotonic() < deadline:
+        for span in exporter.get_finished_spans():
+            if span.name == name and (span.attributes or {}).get("powercontext.operation.outcome") == outcome:
+                return span
+        sleep(0.02)
+    raise AssertionError(f"{name} span was not exported")  # noqa: TRY003
+
+
+def _assert_stage_attribute_keys(span: ReadableSpan) -> None:
+    allowed_keys = _STAGE_ATTRIBUTE_KEYS[span.name]
+    attributes = dict(span.attributes or {})
+    assert attributes.keys() <= allowed_keys
+    assert all(isinstance(value, str | bool | int | float) for value in attributes.values())
+
+
+def _assert_scheduled_background_trace(
+    root: ReadableSpan,
+    stage: ReadableSpan,
+    spans: list[ReadableSpan],
+    *,
+    scope_id: str,
+    content: str,
+) -> None:
+    assert root.parent is None
+    assert stage.parent is not None and stage.parent.span_id == root.context.span_id
+    assert (root.attributes or {})["powercontext.operation.unit"] == "background"
+    assert (root.attributes or {})["powercontext.operation.outcome"] == "success"
+    assert (stage.attributes or {})["powercontext.operation.unit"] == "stage"
+    _assert_stage_attribute_keys(root)
+    _assert_stage_attribute_keys(stage)
+    http_trace_ids = {span.context.trace_id for span in spans if span.name.startswith("HTTP ")}
+    assert root.context.trace_id not in http_trace_ids
+    exported = _exported_span_data(spans)
+    assert scope_id not in exported
+    assert content not in exported
 
 
 def _only_child(spans: list[ReadableSpan], parent: ReadableSpan, name: str) -> ReadableSpan:

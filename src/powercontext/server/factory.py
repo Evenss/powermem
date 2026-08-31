@@ -97,6 +97,7 @@ def create_server_app(
             handoff_pipeline=handoff_pipeline,
             embedding_model=embedding_model,
             instrumentation=resolved_tracing.instrumentation,
+            scope_cache_observer=None if metrics is None else metrics.set_runtime_scopes,
             tracing=resolved_tracing,
         ) as runtime:
             readiness_probe.bind(runtime)
@@ -186,6 +187,7 @@ def _mount_optional_web_ui(app: FastAPI, settings: ServerSettings) -> None:
             dashboard_enabled=settings.dashboard.enabled,
             handoff_report_enabled=settings.handoff_report.enabled,
             authentication_required=settings.auth.enabled,
+            agent_skill_targets=settings.external_skills.agent_targets,
         )
         if settings.dashboard.enabled:
             app.state.dashboard_started = True
@@ -242,7 +244,7 @@ class _ServerReadinessProbe:
             )
         return ReadinessResponse(
             status=ReadinessStatus(readiness.status.value),
-            checks={name: status.value for name, status in readiness.checks.items()},
+            checks={name: str(status) for name, status in readiness.checks.items()},
         )
 
     def _observe(self, status: ReadinessStatus) -> None:

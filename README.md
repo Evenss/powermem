@@ -1,5 +1,12 @@
 # PowerContext
 
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="theme/powercontext/assets/images/powercontext-reverse.png">
+  <img alt="PowerContext" src="theme/powercontext/assets/images/powercontext-color.png" width="480" />
+</picture>
+
 **Not only memory**
 
 [![PyPI version](https://img.shields.io/pypi/v/powercontext)](https://pypi.org/project/powercontext/)
@@ -7,6 +14,8 @@
 [![Discord](https://img.shields.io/badge/Discord-community-5865F2?logo=discord&logoColor=white)](https://discord.com/invite/74cF8vbNEs)
 
 *[English](README.md) · [中文](README_CN.md) · [日本語](README_JP.md)*
+
+</div>
 
 PowerContext is the upgraded version of [PowerMem](https://www.powermem.ai/) and a context runtime for human-agent
 collaboration. It turns shared work into project context that can be understood, handed off, and continued.
@@ -19,18 +28,26 @@ host.
 ### 1. Install PowerContext and integrations
 
 ```bash
-uv tool install "powercontext[cli,server]==0.0.2"
+uv tool install --force "powercontext[cli,server] @ git+https://github.com/oceanbase/powercontext.git@master"
 
-# Choose one or more integrations.
-powercontext setup codex --source oceanbase/powercontext --ref v0.0.2
-powercontext setup claude-code --source oceanbase/powercontext --ref v0.0.2
-powercontext setup dsh --source oceanbase/powercontext --ref v0.0.2
-powercontext setup hermes --source oceanbase/powercontext --ref v0.0.2
+# Choose one or more integrations. Every setup command installs from the master branch.
+powercontext setup codex --source oceanbase/powercontext --ref master
+powercontext setup claude-code --source oceanbase/powercontext --ref master
+powercontext setup dsh --source oceanbase/powercontext --ref master
+powercontext setup hermes --source oceanbase/powercontext --ref master
+powercontext setup openclaw --source oceanbase/powercontext --ref master
+powercontext setup opencode --source oceanbase/powercontext --ref master
+powercontext setup pi --source oceanbase/powercontext --ref master
+powercontext setup workbuddy --source oceanbase/powercontext --ref master
+
+# Or install several hosts in one pass.
+powercontext setup select --host codex --host claude-code --host opencode \
+  --source oceanbase/powercontext --ref master
 ```
 
-The first command installs the CLI and local Server in an isolated environment. The subsequent setup commands
-install the corresponding integrations from the matching repository tag. Run setup again to refresh an existing
-installation.
+The first command installs the CLI and local Server from the latest `master` revision in an isolated environment.
+Every setup command installs its integration from the same `master` revision. Run setup again to refresh an existing
+integration.
 
 ### 2. Start and verify the local Server
 
@@ -44,7 +61,8 @@ In another terminal, verify the service and plugin:
 
 ```bash
 powercontext doctor
-powercontext doctor codex  # or: claude-code / dsh / hermes
+powercontext doctor integrations
+powercontext doctor codex  # Replace codex with the host you installed.
 ```
 
 By default, the Server listens on `127.0.0.1:8000`, exposes Streamable HTTP MCP at `/mcp`, and persists data in a
@@ -79,20 +97,35 @@ model.
 ## Integrations
 
 PowerContext provides official integrations and installation guides for Codex, Claude Code, DeepSeek Harness, Hermes
-Agent, and Pi Coding Agent. These integrations use the same scoped data and history-preserving contracts through
-PowerContext Server; the host integrations do not start or embed the Server.
+Agent, Pi Coding Agent, OpenClaw, OpenCode, WorkBuddy, Bub, Pydantic AI, LangChain, and LangGraph. These integrations
+use the same scoped data and history-preserving contracts through PowerContext Server; the host integrations do not
+start or embed the Server.
 
 ### Official integrations
 
 <table>
 <tr>
-<td align="center" width="120"><img src="https://github.com/openai.png?size=120" alt="Codex" width="48" height="48" /><br /><sub><b>Codex</b></sub></td>
-<td align="center" width="120"><img src="https://github.com/anthropics.png?size=120" alt="Claude Code" width="48" height="48" /><br /><sub><b>Claude Code</b></sub></td>
-<td align="center" width="120"><img src="https://github.com/deepseek-ai.png?size=120" alt="DeepSeek Harness" width="48" height="48" /><br /><sub><b>DeepSeek Harness</b></sub></td>
+<td align="center" width="120"><a href="docs/en/docs/how-to/configure-codex.md"><img src="https://github.com/openai.png?size=120" alt="Codex" width="48" height="48" /><br /><sub><b>Codex</b></sub></a></td>
+<td align="center" width="120"><a href="docs/en/docs/how-to/configure-claude-code.md"><img src="https://github.com/anthropics.png?size=120" alt="Claude Code" width="48" height="48" /><br /><sub><b>Claude Code</b></sub></a></td>
+<td align="center" width="120"><a href="docs/en/docs/how-to/configure-dsh.md"><img src="https://github.com/deepseek-ai.png?size=120" alt="DeepSeek Harness" width="48" height="48" /><br /><sub><b>DeepSeek Harness</b></sub></a></td>
 <td align="center" width="120"><a href="integrations/hermes/README.md"><img src="https://github.com/NousResearch/hermes-agent/blob/main/website/static/img/logo.png?raw=true&size=120" alt="Hermes Agent" width="48" height="48" /><br /><sub><b>Hermes Agent</b></sub></a></td>
 <td align="center" width="120"><a href="docs/en/docs/how-to/configure-pi.md"><img src="https://github.com/earendil-works.png?size=120" alt="Pi Coding Agent" width="48" height="48" /><br /><sub><b>Pi Coding Agent</b></sub></a></td>
+<td align="center" width="120"><a href="docs/en/docs/how-to/configure-openclaw.md"><img src="https://github.com/openclaw.png?size=120" alt="OpenClaw" width="48" height="48" /><br /><sub><b>OpenClaw</b></sub></a></td>
+</tr>
+<tr>
+<td align="center" width="120"><a href="docs/en/docs/how-to/configure-opencode.md"><img src="https://github.com/anomalyco.png?size=120" alt="OpenCode" width="48" height="48" /><br /><sub><b>OpenCode</b></sub></a></td>
+<td align="center" width="120"><a href="integrations/workbuddy/README.md"><img src="docs/assets/workbuddy.svg" alt="WorkBuddy" width="48" height="48" /><br /><sub><b>WorkBuddy</b></sub></a></td>
+<td align="center" width="120"><a href="integrations/bub/README.md"><img src="https://github.com/bubbuild.png?size=120" alt="Bub" width="48" height="48" /><br /><sub><b>Bub</b></sub></a></td>
+<td align="center" width="120"><a href="docs/en/docs/how-to/configure-pydantic-ai.md"><img src="https://github.com/pydantic.png?size=120" alt="Pydantic AI" width="48" height="48" /><br /><sub><b>Pydantic AI</b></sub></a></td>
+<td align="center" width="120"><a href="docs/en/docs/how-to/configure-langchain.md"><img src="https://github.com/langchain-ai.png?size=120" alt="LangChain" width="48" height="48" /><br /><sub><b>LangChain</b></sub></a></td>
+<td align="center" width="120"><a href="docs/en/docs/how-to/configure-langgraph.md"><img src="https://github.com/langchain-ai.png?size=120" alt="LangGraph" width="48" height="48" /><br /><sub><b>LangGraph</b></sub></a></td>
 </tr>
 </table>
+
+Python agent applications can use the [LangChain middleware](docs/en/docs/how-to/configure-langchain.md), the
+[LangGraph node and tools adapter](docs/en/docs/how-to/configure-langgraph.md), the
+[Pydantic AI middleware](docs/en/docs/how-to/configure-pydantic-ai.md), or the
+[Bub plugin](integrations/bub/README.md).
 
 ## Development
 

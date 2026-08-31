@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 import re
+import shlex
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -31,6 +32,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from powercontext.builtin.artifacts.experience import ExperienceCandidateInput
 from powercontext.builtin.artifacts.memory import EmbeddingProfile
 from powercontext.builtin.inference import EmbeddingResult, InferenceConfigurationError
+from powercontext.builtin.inference.pydantic_ai import PydanticAIConfigurationError
 from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
@@ -94,6 +96,7 @@ def test_settings_load_server_environment(monkeypatch) -> None:
         "POWERCONTEXT_SERVER_DATABASE_URL",
         "sqlite+aiosqlite:////var/lib/powercontext/test.db",
     )
+    monkeypatch.setenv("POWERCONTEXT_SERVER_RUNTIME_SCOPE_CACHE_SIZE", "64")
     monkeypatch.setenv("POWERCONTEXT_SERVER_RUNTIME_SOURCE_WINDOW_LIMIT", "25")
     monkeypatch.setenv("POWERCONTEXT_SERVER_RUNTIME_MEMORY_EXTRACTION_PROFILE", "conversation")
     monkeypatch.setenv("POWERCONTEXT_SERVER_RUNTIME_MEMORY_RERANK_ENABLED", "true")
@@ -107,8 +110,11 @@ def test_settings_load_server_environment(monkeypatch) -> None:
     monkeypatch.setenv(
         "POWERCONTEXT_SERVER_EXTERNAL_SKILLS",
         (
-            '{"host_id":"workstation-1","codex_roots":['
-            '{"root_id":"repository","installation_scope":"project","path":"/srv/project/.agents/skills"}]}'
+            '{"host_id":"workstation-1","targets":['
+            '{"target_id":"codex-project","agent_kind":"codex","installation_scope":"project",'
+            '"path":"/srv/project/.agents/skills","allow_managed_publish":true},'
+            '{"target_id":"claude-user","agent_kind":"claude_code","installation_scope":"user",'
+            '"path":"/home/example/.claude/skills"}]}'
         ),
     )
 
@@ -118,6 +124,7 @@ def test_settings_load_server_environment(monkeypatch) -> None:
     assert settings.http.port == 9000
     assert isinstance(settings.database, SQLiteConfig)
     assert settings.database.url == "sqlite+aiosqlite:////var/lib/powercontext/test.db"
+    assert settings.runtime.scope_cache_size == 64
     assert settings.runtime.source_window_limit == 25
     assert settings.runtime.memory_extraction_profile is MemoryExtractionProfile.CONVERSATION
     assert settings.runtime.memory_rerank_enabled is True
@@ -131,8 +138,11 @@ def test_settings_load_server_environment(monkeypatch) -> None:
     assert settings.dashboard.enabled is True
     assert settings.dashboard.scopes == []
     assert settings.external_skills.host_id == "workstation-1"
-    assert settings.external_skills.codex_roots[0].root_id == "repository"
-    assert settings.external_skills.codex_roots[0].path.as_posix() == "/srv/project/.agents/skills"
+    assert settings.external_skills.targets[0].target_id == "codex-project"
+    assert settings.external_skills.targets[0].path.as_posix() == "/srv/project/.agents/skills"
+    assert settings.external_skills.targets[0].allow_managed_publish is True
+    assert settings.external_skills.targets[1].agent_kind == "claude_code"
+    assert settings.external_skills.targets[1].path.as_posix() == "/home/example/.claude/skills"
 
 
 def test_env_example_loads_server_settings(monkeypatch) -> None:
@@ -144,13 +154,18 @@ def test_env_example_loads_server_settings(monkeypatch) -> None:
         assignment = line.strip()
         if not assignment or assignment.startswith("#"):
             continue
-        name, value = assignment.split("=", maxsplit=1)
+        parsed = shlex.split(assignment, comments=True, posix=True)
+        assert len(parsed) == 1
+        name, value = parsed[0].split("=", maxsplit=1)
         monkeypatch.setenv(name, value)
 
     settings = ServerSettings()
 
     assert isinstance(settings.database, SQLiteConfig)
-    assert settings.inference.embedding_dimension == 2560
+    assert settings.dashboard.scopes[0].scope_id == "project:quickstart"
+    assert settings.runtime.schedule_seconds == 60
+    assert settings.inference.generation_model == "openai:gpt-4.1-mini"
+    assert settings.inference.embedding_dimension == 1536
 
 
 def test_server_settings_select_oceanbase(monkeypatch) -> None:
@@ -439,6 +454,30 @@ def test_server_factory_caches_and_redacts_degraded_embedding_readiness(caplog, 
     assert "secret provider response" not in caplog.text
 
 
+def test_server_factory_reports_a_rejected_embedding_request_with_a_redacted_reason(tmp_path) -> None:
+    embedding = _FailingEmbeddingModel(PydanticAIConfigurationError("provider-rejected", detail="HTTP 400"))
+    app = create_server_app(
+        settings=ServerSettings(
+            database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}"),
+            mcp=McpConfig(enabled=False),
+        ),
+        embedding_model=embedding,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/health/ready")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "degraded",
+        "checks": {
+            "runtime": "ready",
+            "database": "ready",
+            "inference.embedding": "misconfigured: provider-rejected (HTTP 400)",
+        },
+    }
+
+
 @pytest.mark.parametrize(
     ("error", "expected_status"),
     [
@@ -572,7 +611,7 @@ def test_server_factory_reports_missing_embedding_api_prefix_as_degraded(caplog,
             "checks": {
                 "runtime": "ready",
                 "database": "ready",
-                "inference.embedding": "misconfigured",
+                "inference.embedding": "misconfigured: provider-rejected (HTTP 404)",
             },
         }
     )
